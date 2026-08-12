@@ -1,0 +1,12 @@
+build/
+*.o
+*.so
+*.a
+*.core
+core
+core.*
+__pycache__/
+.pytest_cache/
+.venv/
+.env
+*.log
