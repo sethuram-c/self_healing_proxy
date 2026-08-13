@@ -20,6 +20,27 @@ Status: IN PROGRESS
 
 Pending verification.
 
-### Next Phase
 
-Phase 02 — Linux processes, file descriptors, /proc, strace.
+
+## Phase 02 — Linux Processes, File Descriptors, /proc, and strace
+
+Status: COMPLETE
+
+### Concepts Learned
+
+- Linux process identity using PID and PPID
+- Per-process file descriptor tables
+- Standard descriptors 0, 1, and 2
+- `/proc/<PID>/fd`
+- `/proc/<PID>/status`
+- `/proc/<PID>/limits`
+- `/proc/<PID>/maps`
+- Syscall tracing with strace
+
+### Tests
+
+- Strict compile: PASS
+- Process inspection test: PASS
+- Regression smoke test: PASS
+- ASan/UBSan: PASS
+

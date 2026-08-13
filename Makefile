@@ -17,8 +17,9 @@ $(TARGET): $(SOURCE)
 run: all
 	./$(TARGET)
 
-test: all
+test: all $(PROCESS_INSPECT)
 	python3 tests/unit/test_smoke.py
+	python3 tests/unit/test_process_inspect.py
 
 sanitize:
 	mkdir -p build
@@ -27,3 +28,14 @@ sanitize:
 
 clean:
 	rm -rf build
+
+PROCESS_INSPECT := build/process_inspect
+
+.PHONY: inspect-process
+
+$(PROCESS_INSPECT): src/process_inspect.c
+	mkdir -p build
+	$(CC) $(CFLAGS) src/process_inspect.c -o $(PROCESS_INSPECT)
+
+inspect-process: $(PROCESS_INSPECT)
+	./$(PROCESS_INSPECT)
