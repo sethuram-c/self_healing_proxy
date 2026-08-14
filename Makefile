@@ -39,3 +39,26 @@ $(PROCESS_INSPECT): src/process_inspect.c
 
 inspect-process: $(PROCESS_INSPECT)
 	./$(PROCESS_INSPECT)
+
+TCP_LISTENER := build/tcp_listener
+
+.PHONY: tcp-listener
+
+$(TCP_LISTENER): src/tcp_listener.c
+	mkdir -p build
+	$(CC) $(CFLAGS) src/tcp_listener.c -o $(TCP_LISTENER)
+
+tcp-listener: $(TCP_LISTENER)
+	./$(TCP_LISTENER)
+
+
+.PHONY: test-unit test-integration
+
+test-unit: all $(PROCESS_INSPECT)
+	python3 tests/unit/test_smoke.py
+	python3 tests/unit/test_process_inspect.py
+
+test-integration: $(TCP_LISTENER)
+	python3 tests/integration/test_tcp_listener.py
+
+test: test-unit test-integration
