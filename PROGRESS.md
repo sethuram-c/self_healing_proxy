@@ -2,25 +2,34 @@
 
 Total planned phases: 60
 
+---
+
 ## Phase 01 — Environment & Git Foundation
 
-Status: IN PROGRESS
+Status: COMPLETE
 
-### Acceptance Criteria
+### Concepts Learned
 
-- [ ] Fedora development tools verified
-- [ ] Repository structure created
-- [ ] Strict C compilation successful
-- [ ] Makefile build successful
-- [ ] Automated smoke test passed
-- [ ] Sanitizer build passed
-- [ ] Git commit created
+- Fedora development environment
+- GCC
+- Make
+- Strict compiler warnings
+- Debug builds
+- AddressSanitizer
+- UndefinedBehaviorSanitizer
+- Basic automated testing
+- Git repository foundation
 
-### Test Results
+### Tests
 
-Pending verification.
+- Strict compilation: PASS
+- Program execution: PASS
+- Smoke test: PASS
+- ASan: PASS
+- UBSan: PASS
+- ELF inspection: PASS
 
-
+---
 
 ## Phase 02 — Linux Processes, File Descriptors, /proc, and strace
 
@@ -35,14 +44,17 @@ Status: COMPLETE
 - `/proc/<PID>/status`
 - `/proc/<PID>/limits`
 - `/proc/<PID>/maps`
-- Syscall tracing with strace
+- System calls
+- Syscall tracing using strace
 
 ### Tests
 
-- Strict compile: PASS
+- Strict compilation: PASS
 - Process inspection test: PASS
 - Regression smoke test: PASS
 - ASan/UBSan: PASS
+
+---
 
 ## Phase 03 — TCP/IP Fundamentals and Socket Lifecycle
 
@@ -52,28 +64,29 @@ Status: COMPLETE
 
 - IPv4 loopback networking
 - TCP server socket lifecycle
-- socket()
-- setsockopt()
-- bind()
-- listen()
-- accept()
-- recv()
-- send()
-- Listening vs connected sockets
-- TCP ports and ephemeral client ports
+- `socket()`
+- `setsockopt()`
+- `bind()`
+- `listen()`
+- `accept()`
+- `recv()`
+- `send()`
+- Listening versus connected sockets
+- TCP ports
+- Ephemeral client ports
 - Network byte order
-- SO_REUSEADDR
-- TCP socket inspection using ss
-- Socket file descriptors through /proc
-- Socket syscall tracing with strace
+- `SO_REUSEADDR`
+- Socket inspection with `ss`
+- Socket FDs through `/proc`
+- Socket syscall tracing using `strace`
 
 ### Tests
 
 - Strict compilation: PASS
 - Manual TCP connection: PASS
-- ss socket inspection: PASS
-- /proc FD inspection: PASS
-- strace socket lifecycle: PASS
+- `ss` socket inspection: PASS
+- `/proc` FD inspection: PASS
+- `strace` socket lifecycle: PASS
 - TCP integration test: PASS
 - Regression suite: PASS
 - ASan/UBSan: PASS
@@ -86,16 +99,17 @@ Status: COMPLETE
 ### Concepts Learned
 
 - Long-lived listening sockets
-- Repeated accept() loops
+- Repeated `accept()` loops
 - File descriptor reuse
-- errno
-- EINTR
-- POSIX signal handling
-- sigaction()
-- sig_atomic_t
-- SIGINT and SIGTERM
+- `errno`
+- `EINTR`
+- POSIX signals
+- `sigaction()`
+- `sig_atomic_t`
+- `SIGINT`
+- `SIGTERM`
 - Graceful process shutdown
-- SIGPIPE avoidance
+- `SIGPIPE` avoidance
 - Sequential blocking server limitations
 
 ### Tests
@@ -109,5 +123,72 @@ Status: COMPLETE
 - strace inspection: PASS
 - Integration tests: PASS
 - Regression tests: PASS
-- ASan/UBSan: PASS
 
+---
+
+## Phase 05 — TCP I/O, EOF, and Connection Lifecycle
+
+Status: COMPLETE
+
+### Concepts Learned
+
+- TCP byte-stream semantics
+- Repeated `recv()` processing
+- `recv()` return-value semantics
+- Orderly EOF
+- TCP half-close
+- `shutdown()`
+- `close()` versus `shutdown()`
+- EINTR during socket I/O
+- Partial send semantics
+- `send_all()`
+- `SIGPIPE`
+- `MSG_NOSIGNAL`
+- `EPIPE`
+- Connection-scoped failures
+
+### Tests
+
+- Repeated stream I/O: PASS
+- EOF detection: PASS
+- TCP half-close: PASS
+- Multiple sequential clients: PASS
+- Graceful shutdown: PASS
+- Integration tests: PASS
+- Regression tests: PASS
+
+---
+
+## Phase 06 — TCP Fragmentation, Short I/O, and Buffering
+
+Status: COMPLETE
+
+### Concepts Learned
+
+- TCP stream fragmentation
+- Arbitrary `recv()` boundaries
+- Send and receive boundary independence
+- Partial write semantics
+- Fixed-capacity byte buffers
+- Buffer offsets
+- Buffer compaction
+- Pending-byte tracking
+- Exact byte-stream validation
+- Foundations of backpressure
+
+### Tests
+
+- `io_buffer` initialization: PASS
+- `io_buffer` produce/consume: PASS
+- `io_buffer` compaction: PASS
+- Fragmented one-byte sender: PASS
+- Mismatched send/read chunk sizes: PASS
+- 32 KB binary stream integrity: PASS
+- EOF handling: PASS
+- Regression tests: PASS
+- ASan/UBSan buffer tests: PASS
+- ASan/UBSan TCP tests: PASS
+
+### Next Phase
+
+Phase 07 — Non-blocking sockets, `fcntl()`, `EAGAIN`, and `EWOULDBLOCK`.

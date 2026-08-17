@@ -9,9 +9,11 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "io_buffer.h"
+
 #define PORT 8080
 #define BACKLOG 16
-#define BUFFER_SIZE 1024
+#define PHASE06_RECV_CHUNK 16
 
 static volatile sig_atomic_t stop_requested = 0;
 
@@ -28,18 +30,11 @@ static int install_signal_handlers(void)
     memset(&action, 0, sizeof(action));
 
     action.sa_handler = handle_signal;
+    action.sa_flags = 0;
 
     if (sigemptyset(&action.sa_mask) == -1) {
         return -1;
     }
-
-    /*
-     * Deliberately do not use SA_RESTART.
-     *
-     * We want accept() to return EINTR when SIGINT/SIGTERM
-     * arrives so that the main loop can notice stop_requested.
-     */
-    action.sa_flags = 0;
 
     if (sigaction(SIGINT, &action, NULL) == -1) {
         return -1;
@@ -52,7 +47,11 @@ static int install_signal_handlers(void)
     return 0;
 }
 
-static int send_all(int fd, const char *buffer, size_t length)
+static int send_all(
+    int fd,
+    const unsigned char *buffer,
+    size_t length
+)
 {
     size_t total_sent = 0;
 
@@ -70,6 +69,10 @@ static int send_all(int fd, const char *buffer, size_t length)
         }
 
         if (sent == -1 && errno == EINTR) {
+            if (stop_requested) {
+                return -1;
+            }
+
             continue;
         }
 
@@ -81,55 +84,90 @@ static int send_all(int fd, const char *buffer, size_t length)
 
 static int handle_client(int client_fd)
 {
-    char buffer[BUFFER_SIZE];
+    io_buffer_t buffer;
 
-    ssize_t received;
+    io_buffer_init(&buffer);
 
     for (;;) {
-        received = recv(
+        if (io_buffer_tail_space(&buffer)
+            < PHASE06_RECV_CHUNK) {
+
+            io_buffer_compact(&buffer);
+        }
+
+        size_t available =
+            io_buffer_tail_space(&buffer);
+
+        if (available > PHASE06_RECV_CHUNK) {
+            available = PHASE06_RECV_CHUNK;
+        }
+
+        if (available == 0) {
+            fprintf(
+                stderr,
+                "I/O buffer unexpectedly full\n"
+            );
+
+            return -1;
+        }
+
+        ssize_t received = recv(
             client_fd,
-            buffer,
-            sizeof(buffer) - 1,
+            io_buffer_write_ptr(&buffer),
+            available,
             0
         );
 
-        if (received == -1 && errno == EINTR) {
+        if (received > 0) {
+            io_buffer_produce(
+                &buffer,
+                (size_t)received
+            );
+
+            printf(
+                "recv chunk: %zd bytes\n",
+                received
+            );
+
+            while (io_buffer_size(&buffer) > 0) {
+                size_t pending =
+                    io_buffer_size(&buffer);
+
+                if (send_all(
+                        client_fd,
+                        io_buffer_read_ptr(&buffer),
+                        pending) == -1) {
+
+                    perror("send");
+                    return -1;
+                }
+
+                io_buffer_consume(
+                    &buffer,
+                    pending
+                );
+            }
+
             continue;
         }
 
-        break;
-    }
+        if (received == 0) {
+            printf("Client reached EOF\n");
+            return 0;
+        }
 
-    if (received == -1) {
+        if (errno == EINTR) {
+            if (stop_requested) {
+                return 0;
+            }
+
+            continue;
+        }
+
         perror("recv");
+
         return -1;
     }
-
-    if (received == 0) {
-        printf("Client closed without sending data\n");
-        return 0;
-    }
-
-    buffer[received] = '\0';
-
-    printf(
-        "Received %zd bytes: %s",
-        received,
-        buffer
-    );
-
-    const char response[] =
-        "hello from phase04 tcp server\n";
-
-    if (send_all(
-            client_fd,
-            response,
-            sizeof(response) - 1) == -1) {
-        perror("send");
-        return -1;
-    }
-
-    return 0;
 }
 
 int main(void)
@@ -158,43 +196,67 @@ int main(void)
             SO_REUSEADDR,
             &enable,
             sizeof(enable)) == -1) {
+
         perror("setsockopt");
         close(server_fd);
+
         return EXIT_FAILURE;
     }
 
     struct sockaddr_in server_addr;
 
-    memset(&server_addr, 0, sizeof(server_addr));
+    memset(
+        &server_addr,
+        0,
+        sizeof(server_addr)
+    );
 
     server_addr.sin_family = AF_INET;
+
     server_addr.sin_addr.s_addr =
         htonl(INADDR_LOOPBACK);
-    server_addr.sin_port = htons(PORT);
+
+    server_addr.sin_port =
+        htons(PORT);
 
     if (bind(
             server_fd,
             (struct sockaddr *)&server_addr,
             sizeof(server_addr)) == -1) {
+
         perror("bind");
         close(server_fd);
+
         return EXIT_FAILURE;
     }
 
     if (listen(server_fd, BACKLOG) == -1) {
         perror("listen");
         close(server_fd);
+
         return EXIT_FAILURE;
     }
 
-    printf("TCP server PID: %ld\n", (long)getpid());
-    printf("Listening FD: %d\n", server_fd);
-    printf("Listening on 127.0.0.1:%d\n", PORT);
+    printf(
+        "TCP server PID: %ld\n",
+        (long)getpid()
+    );
+
+    printf(
+        "Listening FD: %d\n",
+        server_fd
+    );
+
+    printf(
+        "Listening on 127.0.0.1:%d\n",
+        PORT
+    );
 
     fflush(stdout);
 
     while (!stop_requested) {
         struct sockaddr_in client_addr;
+
         socklen_t client_addr_len =
             sizeof(client_addr);
 
@@ -214,7 +276,9 @@ int main(void)
             }
 
             perror("accept");
+
             close(server_fd);
+
             return EXIT_FAILURE;
         }
 
@@ -225,8 +289,11 @@ int main(void)
                 &client_addr.sin_addr,
                 client_ip,
                 sizeof(client_ip)) == NULL) {
+
             perror("inet_ntop");
+
             close(client_fd);
+
             continue;
         }
 
@@ -234,7 +301,8 @@ int main(void)
             "Accepted %s:%u on FD %d\n",
             client_ip,
             (unsigned int)ntohs(
-                client_addr.sin_port),
+                client_addr.sin_port
+            ),
             client_fd
         );
 
@@ -250,7 +318,9 @@ int main(void)
         return EXIT_FAILURE;
     }
 
-    printf("TCP server shut down cleanly\n");
+    printf(
+        "TCP server shut down cleanly\n"
+    );
 
     return EXIT_SUCCESS;
 }
