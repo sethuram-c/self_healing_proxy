@@ -189,6 +189,34 @@ Status: COMPLETE
 - ASan/UBSan buffer tests: PASS
 - ASan/UBSan TCP tests: PASS
 
-### Next Phase
+## Phase 07 — Non-Blocking Sockets and EAGAIN
 
-Phase 07 — Non-blocking sockets, `fcntl()`, `EAGAIN`, and `EWOULDBLOCK`.
+Status: COMPLETE
+
+### Concepts Learned
+
+- Blocking versus non-blocking I/O
+- fcntl()
+- F_GETFL
+- F_SETFL
+- O_NONBLOCK
+- EAGAIN
+- EWOULDBLOCK
+- Non-blocking accept()
+- Non-blocking recv()
+- Temporary readiness failures
+- socketpair()
+- Busy-loop avoidance
+- Relationship between buffering and non-blocking writes
+
+### Tests
+
+- O_NONBLOCK flag verification: PASS
+- Empty non-blocking recv(): PASS
+- EAGAIN/EWOULDBLOCK handling: PASS
+- Receive after data arrival: PASS
+- Empty non-blocking accept(): PASS
+- strace verification: PASS
+- Regression tests: PASS
+- ASan/UBSan: PASS
+

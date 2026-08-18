@@ -9,6 +9,7 @@ SOURCE := src/main.c
 PROCESS_INSPECT := build/process_inspect
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
+NONBLOCKING_TEST := build/test_nonblocking
 
 SANITIZED_TCP := build/tcp_listener-sanitized
 
@@ -68,6 +69,16 @@ $(IO_BUFFER_TEST): \
 		src/io_buffer.c \
 		-o $(IO_BUFFER_TEST)
 
+$(NONBLOCKING_TEST): \
+	tests/unit/test_nonblocking.c \
+	src/net_utils.c \
+	include/net_utils.h
+
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		tests/unit/test_nonblocking.c \
+		src/net_utils.c \
+		-o $(NONBLOCKING_TEST)
 
 run: all
 	./$(TARGET)
@@ -84,11 +95,14 @@ tcp-listener: $(TCP_LISTENER)
 test-unit: \
 	all \
 	$(PROCESS_INSPECT) \
-	$(IO_BUFFER_TEST)
+	$(IO_BUFFER_TEST) \
+	$(NONBLOCKING_TEST)
+
 
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
-	./$(IO_BUFFER_TEST)
+	./$(IO_BUFFER_TESTi)
+	./$(NONBLOCKING_TEST)
 
 
 test-integration: $(TCP_LISTENER)
@@ -127,10 +141,19 @@ sanitize-tcp:
 	TCP_LISTENER_BIN=$(SANITIZED_TCP) \
 		python3 tests/integration/test_tcp_listener.py
 
+sanitize-nonblocking:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		tests/unit/test_nonblocking.c \
+		src/net_utils.c \
+		-o build/test_nonblocking-sanitized
+
+	./build/test_nonblocking-sanitized
 
 sanitize: \
 	sanitize-main \
 	sanitize-buffer \
+	sanitize-nonblocking \
 	sanitize-tcp
 
 
