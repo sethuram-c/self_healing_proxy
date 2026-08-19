@@ -10,6 +10,8 @@ PROCESS_INSPECT := build/process_inspect
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
 NONBLOCKING_TEST := build/test_nonblocking
+EPOLL_SERVER := build/epoll_server
+SANITIZED_EPOLL := build/epoll_server-sanitized
 
 SANITIZED_TCP := build/tcp_listener-sanitized
 
@@ -80,6 +82,17 @@ $(NONBLOCKING_TEST): \
 		src/net_utils.c \
 		-o $(NONBLOCKING_TEST)
 
+$(EPOLL_SERVER): \
+	src/epoll_server.c \
+	src/net_utils.c \
+	include/net_utils.h
+
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		src/epoll_server.c \
+		src/net_utils.c \
+		-o $(EPOLL_SERVER)
+
 run: all
 	./$(TARGET)
 
@@ -90,6 +103,9 @@ inspect-process: $(PROCESS_INSPECT)
 
 tcp-listener: $(TCP_LISTENER)
 	./$(TCP_LISTENER)
+
+epoll-server: $(EPOLL_SERVER)
+	./$(EPOLL_SERVER)
 
 
 test-unit: \
@@ -105,9 +121,12 @@ test-unit: \
 	./$(NONBLOCKING_TEST)
 
 
-test-integration: $(TCP_LISTENER)
-	python3 tests/integration/test_tcp_listener.py
+test-integration: \
+	$(TCP_LISTENER) \
+	$(EPOLL_SERVER)
 
+	python3 tests/integration/test_tcp_listener.py
+	python3 tests/integration/test_epoll_server.py
 
 test: test-unit test-integration
 
@@ -150,11 +169,22 @@ sanitize-nonblocking:
 
 	./build/test_nonblocking-sanitized
 
+sanitize-epoll:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		src/epoll_server.c \
+		src/net_utils.c \
+		-o $(SANITIZED_EPOLL)
+
+	EPOLL_SERVER_BIN=$(SANITIZED_EPOLL) \
+		python3 tests/integration/test_epoll_server.py
+
 sanitize: \
 	sanitize-main \
 	sanitize-buffer \
 	sanitize-nonblocking \
-	sanitize-tcp
+	sanitize-tcpi \
+	sanitize-epoll
 
 
 clean:

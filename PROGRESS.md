@@ -220,3 +220,39 @@ Status: COMPLETE
 - Regression tests: PASS
 - ASan/UBSan: PASS
 
+## Phase 08 — First epoll Event Loop
+
+Status: COMPLETE
+
+### Concepts Learned
+
+- epoll_create1()
+- EPOLL_CLOEXEC
+- epoll_ctl()
+- EPOLL_CTL_ADD
+- EPOLL_CTL_DEL
+- epoll_wait()
+- EPOLLIN
+- EPOLLRDHUP
+- EPOLLERR
+- EPOLLHUP
+- Level-triggered epoll
+- Event dispatch
+- Accept-until-EAGAIN
+- Read-until-EAGAIN
+- Multiplexing multiple client sockets
+- epoll as a file descriptor
+
+### Tests
+
+- epoll instance creation: PASS
+- Listener registration: PASS
+- Multiple simultaneous clients: PASS
+- Idle-client isolation: PASS
+- Non-blocking accept loop: PASS
+- Non-blocking recv loop: PASS
+- EOF cleanup: PASS
+- strace epoll verification: PASS
+- Regression tests: PASS
+- ASan/UBSan: PASS
+
