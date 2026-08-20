@@ -256,3 +256,36 @@ Status: COMPLETE
 - Regression tests: PASS
 - ASan/UBSan: PASS
 
+
+## Phase 09 — Per-Connection State and FD Lifecycle
+
+Status: COMPLETE
+
+### Concepts Learned
+
+- Per-connection state objects
+- Logical connection IDs
+- File descriptor reuse
+- epoll_event.data.ptr
+- Tagged event sources
+- Connection ownership
+- Dynamic allocation with calloc()
+- Linked-list connection tracking
+- Centralized teardown
+- Resource acquisition failure paths
+- Memory and FD lifecycle
+- Use-after-free prevention
+
+### Tests
+
+- Connection initialization: PASS
+- Event-source association: PASS
+- Logical connection IDs: PASS
+- Rapid connection churn: PASS
+- FD reuse safety: PASS
+- Connection teardown: PASS
+- Server shutdown cleanup: PASS
+- Integration tests: PASS
+- Regression tests: PASS
+- ASan/UBSan: PASS
+

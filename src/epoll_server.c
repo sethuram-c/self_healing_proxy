@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include "connection.h"
 #include "net_utils.h"
 
 #include <arpa/inet.h>
@@ -15,15 +16,22 @@
 #define PORT 8081
 #define BACKLOG 128
 #define MAX_EVENTS 64
-#define READ_BUFFER_SIZE 4096
+#define READ_CHUNK 1024
 
 static volatile sig_atomic_t stop_requested = 0;
+
+static uint64_t next_connection_id = 1;
+
+static connection_t *connections = NULL;
+
 
 static void handle_signal(int signo)
 {
     (void)signo;
+
     stop_requested = 1;
 }
+
 
 static int install_signal_handlers(void)
 {
@@ -37,16 +45,23 @@ static int install_signal_handlers(void)
         return -1;
     }
 
-    if (sigaction(SIGINT, &action, NULL) == -1) {
+    if (sigaction(
+            SIGINT,
+            &action,
+            NULL) == -1) {
         return -1;
     }
 
-    if (sigaction(SIGTERM, &action, NULL) == -1) {
+    if (sigaction(
+            SIGTERM,
+            &action,
+            NULL) == -1) {
         return -1;
     }
 
     return 0;
 }
+
 
 static int create_listener(void)
 {
@@ -111,10 +126,12 @@ static int create_listener(void)
     return fd;
 }
 
-static int add_to_epoll(
+
+static int add_event_source(
     int epoll_fd,
     int fd,
-    uint32_t events
+    uint32_t events,
+    event_source_t *source
 )
 {
     struct epoll_event event;
@@ -126,7 +143,7 @@ static int add_to_epoll(
     );
 
     event.events = events;
-    event.data.fd = fd;
+    event.data.ptr = source;
 
     return epoll_ctl(
         epoll_fd,
@@ -136,25 +153,100 @@ static int add_to_epoll(
     );
 }
 
-static void close_client(
-    int epoll_fd,
-    int client_fd
+
+static void connection_list_add(
+    connection_t *connection
 )
 {
+    connection->prev = NULL;
+    connection->next = connections;
+
+    if (connections != NULL) {
+        connections->prev = connection;
+    }
+
+    connections = connection;
+}
+
+
+static void connection_list_remove(
+    connection_t *connection
+)
+{
+    if (connection->prev != NULL) {
+        connection->prev->next =
+            connection->next;
+    } else {
+        connections =
+            connection->next;
+    }
+
+    if (connection->next != NULL) {
+        connection->next->prev =
+            connection->prev;
+    }
+
+    connection->prev = NULL;
+    connection->next = NULL;
+}
+
+
+static void connection_destroy(
+    int epoll_fd,
+    connection_t *connection
+)
+{
+    if (connection == NULL) {
+        return;
+    }
+
+    uint64_t id = connection->id;
+    int fd = connection->fd;
+    size_t bytes = connection->bytes_received;
+
     if (epoll_ctl(
             epoll_fd,
             EPOLL_CTL_DEL,
-            client_fd,
-            NULL) == -1
-        && errno != ENOENT) {
+            fd,
+            NULL) == -1) {
 
-        perror("epoll_ctl DEL");
+        if (errno != ENOENT
+            && errno != EBADF) {
+
+            perror("epoll_ctl DEL");
+        }
     }
 
-    if (close(client_fd) == -1) {
+    connection_list_remove(connection);
+
+    if (close(fd) == -1) {
         perror("close client");
     }
+
+    connection_free(connection);
+
+    printf(
+        "Connection %llu FD %d "
+        "closed after %zu bytes\n",
+        (unsigned long long)id,
+        fd,
+        bytes
+    );
 }
+
+
+static void destroy_all_connections(
+    int epoll_fd
+)
+{
+    while (connections != NULL) {
+        connection_destroy(
+            epoll_fd,
+            connections
+        );
+    }
+}
+
 
 static int accept_ready_clients(
     int epoll_fd,
@@ -180,6 +272,7 @@ static int accept_ready_clients(
 
             if (errno == EAGAIN
                 || errno == EWOULDBLOCK) {
+
                 return 0;
             }
 
@@ -188,18 +281,52 @@ static int accept_ready_clients(
         }
 
         if (set_nonblocking(client_fd) == -1) {
-            perror("set_nonblocking client");
+            perror("set_nonblocking");
+
             close(client_fd);
+
             continue;
         }
 
-        if (add_to_epoll(
+        uint64_t id =
+            next_connection_id++;
+
+        connection_t *connection =
+            connection_create(
+                client_fd,
+                id
+            );
+
+        if (connection == NULL) {
+            perror("connection_create");
+
+            close(client_fd);
+
+            continue;
+        }
+
+        connection_list_add(connection);
+
+        if (add_event_source(
                 epoll_fd,
                 client_fd,
-                EPOLLIN | EPOLLRDHUP) == -1) {
+                EPOLLIN
+                    | EPOLLRDHUP,
+                &connection->event_source)
+            == -1) {
 
             perror("epoll_ctl ADD client");
+
+            connection_list_remove(
+                connection
+            );
+
             close(client_fd);
+
+            connection_free(
+                connection
+            );
+
             continue;
         }
 
@@ -209,42 +336,107 @@ static int accept_ready_clients(
                 AF_INET,
                 &client_address.sin_addr,
                 client_ip,
-                sizeof(client_ip)) == NULL) {
+                sizeof(client_ip))
+            == NULL) {
 
             strcpy(client_ip, "?");
         }
 
         printf(
-            "Accepted %s:%u on FD %d\n",
+            "Connection %llu "
+            "opened on FD %d "
+            "from %s:%u\n",
+            (unsigned long long)id,
+            client_fd,
             client_ip,
             (unsigned int)ntohs(
-                client_address.sin_port),
-            client_fd
+                client_address.sin_port
+            )
         );
     }
 }
 
-static void handle_client_event(
+
+static int handle_connection_read(
     int epoll_fd,
-    int client_fd,
-    uint32_t events
+    connection_t *connection
 )
 {
-    unsigned char buffer[READ_BUFFER_SIZE];
-
     for (;;) {
+        if (io_buffer_tail_space(
+                &connection->input)
+            < READ_CHUNK) {
+
+            io_buffer_compact(
+                &connection->input
+            );
+        }
+
+        size_t available =
+            io_buffer_tail_space(
+                &connection->input
+            );
+
+        if (available > READ_CHUNK) {
+            available = READ_CHUNK;
+        }
+
+        if (available == 0) {
+            fprintf(
+                stderr,
+                "Connection %llu "
+                "input buffer full\n",
+                (unsigned long long)
+                    connection->id
+            );
+
+            connection_destroy(
+                epoll_fd,
+                connection
+            );
+
+            return 1;
+        }
+
         ssize_t received = recv(
-            client_fd,
-            buffer,
-            sizeof(buffer),
+            connection->fd,
+            io_buffer_write_ptr(
+                &connection->input),
+            available,
             0
         );
 
         if (received > 0) {
+            io_buffer_produce(
+                &connection->input,
+                (size_t)received
+            );
+
+            connection->bytes_received +=
+                (size_t)received;
+
             printf(
-                "FD %d read %zd bytes\n",
-                client_fd,
-                received
+                "Connection %llu FD %d "
+                "read %zd bytes "
+                "(total %zu)\n",
+                (unsigned long long)
+                    connection->id,
+                connection->fd,
+                received,
+                connection->bytes_received
+            );
+
+            /*
+             * We do not parse an application
+             * protocol yet.
+             *
+             * For Phase 09, consume the bytes
+             * after recording them.
+             */
+            io_buffer_consume(
+                &connection->input,
+                io_buffer_size(
+                    &connection->input)
             );
 
             continue;
@@ -252,16 +444,18 @@ static void handle_client_event(
 
         if (received == 0) {
             printf(
-                "FD %d reached EOF\n",
-                client_fd
+                "Connection %llu "
+                "reached EOF\n",
+                (unsigned long long)
+                    connection->id
             );
 
-            close_client(
+            connection_destroy(
                 epoll_fd,
-                client_fd
+                connection
             );
 
-            return;
+            return 1;
         }
 
         if (errno == EINTR) {
@@ -270,31 +464,76 @@ static void handle_client_event(
 
         if (errno == EAGAIN
             || errno == EWOULDBLOCK) {
-            break;
+
+            return 0;
         }
 
         perror("recv");
 
-        close_client(
+        connection_destroy(
             epoll_fd,
-            client_fd
+            connection
+        );
+
+        return 1;
+    }
+}
+
+
+static void handle_client_event(
+    int epoll_fd,
+    connection_t *connection,
+    uint32_t events
+)
+{
+    /*
+     * handle_connection_read() returns 1
+     * if it destroyed the connection.
+     */
+    int destroyed =
+        handle_connection_read(
+            epoll_fd,
+            connection
+        );
+
+    if (destroyed) {
+        return;
+    }
+
+    if ((events
+         & (EPOLLERR | EPOLLHUP))
+        != 0U) {
+
+        printf(
+            "Connection %llu "
+            "received hangup/error\n",
+            (unsigned long long)
+                connection->id
+        );
+
+        connection_destroy(
+            epoll_fd,
+            connection
         );
 
         return;
     }
 
-    if ((events & (EPOLLERR | EPOLLHUP)) != 0U) {
+    if ((events & EPOLLRDHUP) != 0U) {
+        /*
+         * recv() above is still authoritative.
+         * If all bytes are drained, a later
+         * recv() will produce EOF.
+         */
         printf(
-            "FD %d hangup/error event\n",
-            client_fd
-        );
-
-        close_client(
-            epoll_fd,
-            client_fd
+            "Connection %llu "
+            "peer performed write shutdown\n",
+            (unsigned long long)
+                connection->id
         );
     }
 }
+
 
 int main(void)
 {
@@ -307,30 +546,44 @@ int main(void)
 
     if (install_signal_handlers() == -1) {
         perror("sigaction");
+
         return EXIT_FAILURE;
     }
 
-    int listener_fd = create_listener();
+    int listener_fd =
+        create_listener();
 
     if (listener_fd == -1) {
         perror("create_listener");
+
         return EXIT_FAILURE;
     }
 
     int epoll_fd =
-        epoll_create1(EPOLL_CLOEXEC);
+        epoll_create1(
+            EPOLL_CLOEXEC
+        );
 
     if (epoll_fd == -1) {
         perror("epoll_create1");
+
         close(listener_fd);
 
         return EXIT_FAILURE;
     }
 
-    if (add_to_epoll(
+    event_source_t listener_source;
+
+    listener_source.kind =
+        EVENT_SOURCE_LISTENER;
+
+    listener_source.object = NULL;
+
+    if (add_event_source(
             epoll_fd,
             listener_fd,
-            EPOLLIN) == -1) {
+            EPOLLIN,
+            &listener_source) == -1) {
 
         perror("epoll_ctl ADD listener");
 
@@ -341,8 +594,8 @@ int main(void)
     }
 
     printf(
-        "epoll server listening on "
-        "127.0.0.1:%d\n",
+        "Phase 09 epoll server "
+        "listening on 127.0.0.1:%d\n",
         PORT
     );
 
@@ -365,14 +618,24 @@ int main(void)
             break;
         }
 
-        for (int i = 0; i < ready; ++i) {
-            int fd =
-                events[i].data.fd;
+        for (int i = 0;
+             i < ready;
+             ++i) {
 
-            if (fd == listener_fd) {
+            event_source_t *source =
+                events[i].data.ptr;
+
+            if (source == NULL) {
+                continue;
+            }
+
+            if (source->kind
+                == EVENT_SOURCE_LISTENER) {
+
                 if (accept_ready_clients(
                         epoll_fd,
-                        listener_fd) == -1) {
+                        listener_fd)
+                    == -1) {
 
                     stop_requested = 1;
                     break;
@@ -381,13 +644,28 @@ int main(void)
                 continue;
             }
 
-            handle_client_event(
-                epoll_fd,
-                fd,
-                events[i].events
-            );
+            if (source->kind
+                == EVENT_SOURCE_CLIENT) {
+
+                connection_t *connection =
+                    source->object;
+
+                if (connection == NULL) {
+                    continue;
+                }
+
+                handle_client_event(
+                    epoll_fd,
+                    connection,
+                    events[i].events
+                );
+            }
         }
     }
+
+    destroy_all_connections(
+        epoll_fd
+    );
 
     if (close(epoll_fd) == -1) {
         perror("close epoll");
@@ -400,7 +678,8 @@ int main(void)
     }
 
     printf(
-        "epoll server shut down cleanly\n"
+        "Phase 09 epoll server "
+        "shut down cleanly\n"
     );
 
     return EXIT_SUCCESS;

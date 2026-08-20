@@ -12,8 +12,8 @@ IO_BUFFER_TEST := build/test_io_buffer
 NONBLOCKING_TEST := build/test_nonblocking
 EPOLL_SERVER := build/epoll_server
 SANITIZED_EPOLL := build/epoll_server-sanitized
-
 SANITIZED_TCP := build/tcp_listener-sanitized
+CONNECTION_TEST := build/test_connection
 
 
 .PHONY: \
@@ -84,14 +84,34 @@ $(NONBLOCKING_TEST): \
 
 $(EPOLL_SERVER): \
 	src/epoll_server.c \
+	src/connection.c \
 	src/net_utils.c \
-	include/net_utils.h
+	src/io_buffer.c \
+	include/connection.h \
+	include/net_utils.h \
+	include/io_buffer.h
 
 	mkdir -p build
 	$(CC) $(CFLAGS) -Iinclude \
 		src/epoll_server.c \
+		src/connection.c \
 		src/net_utils.c \
+		src/io_buffer.c \
 		-o $(EPOLL_SERVER)
+
+$(CONNECTION_TEST): \
+	tests/unit/test_connection.c \
+	src/connection.c \
+	src/io_buffer.c \
+	include/connection.h \
+	include/io_buffer.h
+
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		tests/unit/test_connection.c \
+		src/connection.c \
+		src/io_buffer.c \
+		-o $(CONNECTION_TEST)
 
 run: all
 	./$(TARGET)
@@ -112,13 +132,14 @@ test-unit: \
 	all \
 	$(PROCESS_INSPECT) \
 	$(IO_BUFFER_TEST) \
-	$(NONBLOCKING_TEST)
-
+	$(NONBLOCKING_TEST) \
+	$(CONNECTION_TEST)
 
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
-	./$(IO_BUFFER_TESTi)
+	./$(IO_BUFFER_TEST)
 	./$(NONBLOCKING_TEST)
+	./$(CONNECTION_TEST)
 
 
 test-integration: \
@@ -127,11 +148,12 @@ test-integration: \
 
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
+	python3 tests/integration/test_connection_state.py
 
 test: test-unit test-integration
 
 
-sanitize-main:
+sanitize-main: 
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANFLAGS) \
 		$(SOURCE) \
@@ -173,7 +195,9 @@ sanitize-epoll:
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
 		src/epoll_server.c \
+		src/connection.c \
 		src/net_utils.c \
+		src/io_buffer.c \
 		-o $(SANITIZED_EPOLL)
 
 	EPOLL_SERVER_BIN=$(SANITIZED_EPOLL) \
