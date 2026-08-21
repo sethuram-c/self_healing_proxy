@@ -24,6 +24,10 @@ static uint64_t next_connection_id = 1;
 
 static connection_t *connections = NULL;
 
+static size_t total_connections = 0;
+static size_t active_connections = 0;
+static size_t peak_connections = 0;
+static size_t total_bytes_received = 0;
 
 static void handle_signal(int signo)
 {
@@ -204,6 +208,12 @@ static void connection_destroy(
     int fd = connection->fd;
     size_t bytes = connection->bytes_received;
 
+   total_bytes_received += bytes;
+
+   if (active_connections > 0) {
+      active_connections--;
+     }
+
     if (epoll_ctl(
             epoll_fd,
             EPOLL_CTL_DEL,
@@ -329,6 +339,14 @@ static int accept_ready_clients(
 
             continue;
         }
+
+	total_connections++;
+	active_connections++;
+
+	if (active_connections > peak_connections) {
+    peak_connections =
+        active_connections;
+	}
 
         char client_ip[INET_ADDRSTRLEN];
 
@@ -666,6 +684,18 @@ int main(void)
     destroy_all_connections(
         epoll_fd
     );
+
+    printf(
+    "Stage 1 summary: "
+    "total_connections=%zu "
+    "peak_connections=%zu "
+    "active_connections=%zu "
+    "total_bytes=%zu\n",
+    total_connections,
+    peak_connections,
+    active_connections,
+    total_bytes_received
+);
 
     if (close(epoll_fd) == -1) {
         perror("close epoll");

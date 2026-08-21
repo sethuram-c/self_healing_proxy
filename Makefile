@@ -25,6 +25,7 @@ CONNECTION_TEST := build/test_connection
 	test \
 	test-unit \
 	test-integration \
+	test-stress \
 	sanitize \
 	sanitize-main \
 	sanitize-buffer \
@@ -150,8 +151,13 @@ test-integration: \
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
 
-test: test-unit test-integration
+test-stress: $(EPOLL_SERVER)
+	python3 tests/stress/test_100_clients.py
 
+test: \
+	test-unit \
+	test-integration \
+	test-stress
 
 sanitize-main: 
 	mkdir -p build
@@ -202,12 +208,18 @@ sanitize-epoll:
 
 	EPOLL_SERVER_BIN=$(SANITIZED_EPOLL) \
 		python3 tests/integration/test_epoll_server.py
+	
+	EPOLL_SERVER_BIN=$(SANITIZED_EPOLL) \
+		python3 tests/integration/test_connection_state.py
+
+	EPOLL_SERVER_BIN=$(SANITIZED_EPOLL) \
+		python3 tests/stress/test_100_clients.py
 
 sanitize: \
 	sanitize-main \
 	sanitize-buffer \
 	sanitize-nonblocking \
-	sanitize-tcpi \
+	sanitize-tcp \
 	sanitize-epoll
 
 
