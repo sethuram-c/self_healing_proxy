@@ -14,6 +14,8 @@ EPOLL_SERVER := build/epoll_server
 SANITIZED_EPOLL := build/epoll_server-sanitized
 SANITIZED_TCP := build/tcp_listener-sanitized
 CONNECTION_TEST := build/test_connection
+MOCK_BACKEND_TEST := \
+	tests/integration/test_mock_backends.py
 
 
 .PHONY: \
@@ -22,6 +24,9 @@ CONNECTION_TEST := build/test_connection
 	run \
 	inspect-process \
 	tcp-listener \
+	epoll-server \
+	mock-backend-a \
+	mock-backend-b \
 	test \
 	test-unit \
 	test-integration \
@@ -29,8 +34,9 @@ CONNECTION_TEST := build/test_connection
 	sanitize \
 	sanitize-main \
 	sanitize-buffer \
-	sanitize-tcp
-
+	sanitize-nonblocking \
+	sanitize-tcp \
+	sanitize-epoll
 
 all: $(TARGET)
 
@@ -128,6 +134,15 @@ tcp-listener: $(TCP_LISTENER)
 epoll-server: $(EPOLL_SERVER)
 	./$(EPOLL_SERVER)
 
+mock-backend-a:
+	python3 control-plane/mock_backend.py \
+		--name backend-a \
+		--port 9001
+
+mock-backend-b:
+	python3 control-plane/mock_backend.py \
+		--name backend-b \
+		--port 9002
 
 test-unit: \
 	all \
@@ -150,6 +165,7 @@ test-integration: \
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
+	python3 $(MOCK_BACKEND_TEST)
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
