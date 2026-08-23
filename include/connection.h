@@ -23,6 +23,7 @@ typedef struct connection {
     io_buffer_t input;
 
     size_t bytes_received;
+    size_t requests_received;
 
     event_source_t event_source;
 

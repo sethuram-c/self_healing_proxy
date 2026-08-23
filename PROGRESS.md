@@ -328,3 +328,43 @@ The server can multiplex at least 100 simultaneous non-blocking TCP
 connections through a single epoll event loop while maintaining explicit
 per-connection state and clean resource ownership.
 
+
+## Phase 12 — HTTP/1.1 Request Framing
+
+Status: COMPLETE
+
+### Concepts Learned
+
+- HTTP over TCP byte streams
+- Request-line framing
+- CRLF
+- CRLF-CRLF header termination
+- Content-Length
+- Header/body boundaries
+- Fragmented HTTP requests
+- Coalesced HTTP requests
+- Exact message consumption
+- Case-insensitive header names
+- Duplicate Content-Length handling
+- Transfer-Encoding rejection
+- Strict framing
+- Foundations of HTTP request-smuggling defense
+
+### Tests
+
+- Simple GET framing: PASS
+- Fragmented headers: PASS
+- Content-Length body: PASS
+- Partial body detection: PASS
+- Case-insensitive Content-Length: PASS
+- Equal duplicate Content-Length: PASS
+- Conflicting Content-Length rejection: PASS
+- Invalid Content-Length rejection: PASS
+- Transfer-Encoding rejection: PASS
+- Malformed request-line rejection: PASS
+- Coalesced request framing: PASS
+- One-byte HTTP integration: PASS
+- Multi-request integration: PASS
+- Regression tests: PASS
+- ASan/UBSan: PASS
+

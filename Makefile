@@ -16,7 +16,7 @@ SANITIZED_TCP := build/tcp_listener-sanitized
 CONNECTION_TEST := build/test_connection
 MOCK_BACKEND_TEST := \
 	tests/integration/test_mock_backends.py
-
+HTTP_FRAMING_TEST := build/test_http_framing
 
 .PHONY: \
 	all \
@@ -94,9 +94,11 @@ $(EPOLL_SERVER): \
 	src/connection.c \
 	src/net_utils.c \
 	src/io_buffer.c \
+	src/http_framing.c \
 	include/connection.h \
 	include/net_utils.h \
-	include/io_buffer.h
+	include/io_buffer.h \
+	include/http_framing.h
 
 	mkdir -p build
 	$(CC) $(CFLAGS) -Iinclude \
@@ -104,6 +106,7 @@ $(EPOLL_SERVER): \
 		src/connection.c \
 		src/net_utils.c \
 		src/io_buffer.c \
+ 		src/http_framing.c \
 		-o $(EPOLL_SERVER)
 
 $(CONNECTION_TEST): \
@@ -120,6 +123,16 @@ $(CONNECTION_TEST): \
 		src/io_buffer.c \
 		-o $(CONNECTION_TEST)
 
+$(HTTP_FRAMING_TEST): \
+	tests/unit/test_http_framing.c \
+	src/http_framing.c \
+	include/http_framing.h
+
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		tests/unit/test_http_framing.c \
+		src/http_framing.c \
+		-o $(HTTP_FRAMING_TEST)
 run: all
 	./$(TARGET)
 
@@ -149,13 +162,15 @@ test-unit: \
 	$(PROCESS_INSPECT) \
 	$(IO_BUFFER_TEST) \
 	$(NONBLOCKING_TEST) \
-	$(CONNECTION_TEST)
+	$(CONNECTION_TEST) \
+	$(HTTP_FRAMING_TEST)
 
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	./$(IO_BUFFER_TEST)
 	./$(NONBLOCKING_TEST)
 	./$(CONNECTION_TEST)
+	./$(HTTP_FRAMING_TEST)
 
 
 test-integration: \
@@ -165,7 +180,8 @@ test-integration: \
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
-	python3 $(MOCK_BACKEND_TEST)
+	python3 tests/integration/test_mock_backends.py
+	python3 tests/integration/test_http_framing.py	
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -218,6 +234,7 @@ sanitize-epoll:
 	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
 		src/epoll_server.c \
 		src/connection.c \
+		src/http_framing.c \
 		src/net_utils.c \
 		src/io_buffer.c \
 		-o $(SANITIZED_EPOLL)
@@ -231,10 +248,20 @@ sanitize-epoll:
 	EPOLL_SERVER_BIN=$(SANITIZED_EPOLL) \
 		python3 tests/stress/test_100_clients.py
 
+sanitize-http:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		tests/unit/test_http_framing.c \
+		src/http_framing.c \
+		-o build/test_http_framing-sanitized
+
+	./build/test_http_framing-sanitized
+
 sanitize: \
 	sanitize-main \
 	sanitize-buffer \
 	sanitize-nonblocking \
+	sanitize-http \
 	sanitize-tcp \
 	sanitize-epoll
 

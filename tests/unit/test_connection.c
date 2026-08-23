@@ -36,6 +36,10 @@ int main(void)
         connection->event_source.object
         == connection
     );
+	
+    assert(
+    connection->requests_received == 0
+    );
 
     assert(connection->prev == NULL);
     assert(connection->next == NULL);

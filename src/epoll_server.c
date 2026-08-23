@@ -2,6 +2,7 @@
 
 #include "connection.h"
 #include "net_utils.h"
+#include "http_framing.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -50,16 +51,16 @@ static int install_signal_handlers(void)
     }
 
     if (sigaction(
-            SIGINT,
-            &action,
-            NULL) == -1) {
+                SIGINT,
+                &action,
+                NULL) == -1) {
         return -1;
     }
 
     if (sigaction(
-            SIGTERM,
-            &action,
-            NULL) == -1) {
+                SIGTERM,
+                &action,
+                NULL) == -1) {
         return -1;
     }
 
@@ -70,10 +71,10 @@ static int install_signal_handlers(void)
 static int create_listener(void)
 {
     int fd = socket(
-        AF_INET,
-        SOCK_STREAM,
-        0
-    );
+            AF_INET,
+            SOCK_STREAM,
+            0
+            );
 
     if (fd == -1) {
         return -1;
@@ -82,11 +83,11 @@ static int create_listener(void)
     int enable = 1;
 
     if (setsockopt(
-            fd,
-            SOL_SOCKET,
-            SO_REUSEADDR,
-            &enable,
-            sizeof(enable)) == -1) {
+                fd,
+                SOL_SOCKET,
+                SO_REUSEADDR,
+                &enable,
+                sizeof(enable)) == -1) {
 
         close(fd);
         return -1;
@@ -95,10 +96,10 @@ static int create_listener(void)
     struct sockaddr_in address;
 
     memset(
-        &address,
-        0,
-        sizeof(address)
-    );
+            &address,
+            0,
+            sizeof(address)
+          );
 
     address.sin_family = AF_INET;
 
@@ -109,9 +110,9 @@ static int create_listener(void)
         htons(PORT);
 
     if (bind(
-            fd,
-            (struct sockaddr *)&address,
-            sizeof(address)) == -1) {
+                fd,
+                (struct sockaddr *)&address,
+                sizeof(address)) == -1) {
 
         close(fd);
         return -1;
@@ -132,35 +133,35 @@ static int create_listener(void)
 
 
 static int add_event_source(
-    int epoll_fd,
-    int fd,
-    uint32_t events,
-    event_source_t *source
-)
+        int epoll_fd,
+        int fd,
+        uint32_t events,
+        event_source_t *source
+        )
 {
     struct epoll_event event;
 
     memset(
-        &event,
-        0,
-        sizeof(event)
-    );
+            &event,
+            0,
+            sizeof(event)
+          );
 
     event.events = events;
     event.data.ptr = source;
 
     return epoll_ctl(
-        epoll_fd,
-        EPOLL_CTL_ADD,
-        fd,
-        &event
-    );
+            epoll_fd,
+            EPOLL_CTL_ADD,
+            fd,
+            &event
+            );
 }
 
 
 static void connection_list_add(
-    connection_t *connection
-)
+        connection_t *connection
+        )
 {
     connection->prev = NULL;
     connection->next = connections;
@@ -174,8 +175,8 @@ static void connection_list_add(
 
 
 static void connection_list_remove(
-    connection_t *connection
-)
+        connection_t *connection
+        )
 {
     if (connection->prev != NULL) {
         connection->prev->next =
@@ -196,9 +197,9 @@ static void connection_list_remove(
 
 
 static void connection_destroy(
-    int epoll_fd,
-    connection_t *connection
-)
+        int epoll_fd,
+        connection_t *connection
+        )
 {
     if (connection == NULL) {
         return;
@@ -207,21 +208,23 @@ static void connection_destroy(
     uint64_t id = connection->id;
     int fd = connection->fd;
     size_t bytes = connection->bytes_received;
+    size_t requests =
+        connection->requests_received;
 
-   total_bytes_received += bytes;
+    total_bytes_received += bytes;
 
-   if (active_connections > 0) {
-      active_connections--;
-     }
+    if (active_connections > 0) {
+        active_connections--;
+    }
 
     if (epoll_ctl(
-            epoll_fd,
-            EPOLL_CTL_DEL,
-            fd,
-            NULL) == -1) {
+                epoll_fd,
+                EPOLL_CTL_DEL,
+                fd,
+                NULL) == -1) {
 
         if (errno != ENOENT
-            && errno != EBADF) {
+                && errno != EBADF) {
 
             perror("epoll_ctl DEL");
         }
@@ -236,32 +239,34 @@ static void connection_destroy(
     connection_free(connection);
 
     printf(
-        "Connection %llu FD %d "
-        "closed after %zu bytes\n",
-        (unsigned long long)id,
-        fd,
-        bytes
-    );
+            "Connection %llu FD %d "
+            "closed after %zu bytes\n"
+            "and %zu HTTP requests\n",
+            (unsigned long long)id,
+            fd,
+            bytes,
+            requests
+          );
 }
 
 
 static void destroy_all_connections(
-    int epoll_fd
-)
+        int epoll_fd
+        )
 {
     while (connections != NULL) {
         connection_destroy(
-            epoll_fd,
-            connections
-        );
+                epoll_fd,
+                connections
+                );
     }
 }
 
 
 static int accept_ready_clients(
-    int epoll_fd,
-    int listener_fd
-)
+        int epoll_fd,
+        int listener_fd
+        )
 {
     for (;;) {
         struct sockaddr_in client_address;
@@ -270,10 +275,10 @@ static int accept_ready_clients(
             sizeof(client_address);
 
         int client_fd = accept(
-            listener_fd,
-            (struct sockaddr *)&client_address,
-            &client_length
-        );
+                listener_fd,
+                (struct sockaddr *)&client_address,
+                &client_length
+                );
 
         if (client_fd == -1) {
             if (errno == EINTR) {
@@ -281,7 +286,7 @@ static int accept_ready_clients(
             }
 
             if (errno == EAGAIN
-                || errno == EWOULDBLOCK) {
+                    || errno == EWOULDBLOCK) {
 
                 return 0;
             }
@@ -303,9 +308,9 @@ static int accept_ready_clients(
 
         connection_t *connection =
             connection_create(
-                client_fd,
-                id
-            );
+                    client_fd,
+                    id
+                    );
 
         if (connection == NULL) {
             perror("connection_create");
@@ -318,82 +323,148 @@ static int accept_ready_clients(
         connection_list_add(connection);
 
         if (add_event_source(
-                epoll_fd,
-                client_fd,
-                EPOLLIN
+                    epoll_fd,
+                    client_fd,
+                    EPOLLIN
                     | EPOLLRDHUP,
-                &connection->event_source)
-            == -1) {
+                    &connection->event_source)
+                == -1) {
 
             perror("epoll_ctl ADD client");
 
             connection_list_remove(
-                connection
-            );
+                    connection
+                    );
 
             close(client_fd);
 
             connection_free(
-                connection
-            );
+                    connection
+                    );
 
             continue;
         }
 
-	total_connections++;
-	active_connections++;
+        total_connections++;
+        active_connections++;
 
-	if (active_connections > peak_connections) {
-    peak_connections =
-        active_connections;
-	}
+        if (active_connections > peak_connections) {
+            peak_connections =
+                active_connections;
+        }
 
         char client_ip[INET_ADDRSTRLEN];
 
         if (inet_ntop(
-                AF_INET,
-                &client_address.sin_addr,
-                client_ip,
-                sizeof(client_ip))
-            == NULL) {
+                    AF_INET,
+                    &client_address.sin_addr,
+                    client_ip,
+                    sizeof(client_ip))
+                == NULL) {
 
             strcpy(client_ip, "?");
         }
 
         printf(
-            "Connection %llu "
-            "opened on FD %d "
-            "from %s:%u\n",
-            (unsigned long long)id,
-            client_fd,
-            client_ip,
-            (unsigned int)ntohs(
-                client_address.sin_port
-            )
-        );
+                "Connection %llu "
+                "opened on FD %d "
+                "from %s:%u\n",
+                (unsigned long long)id,
+                client_fd,
+                client_ip,
+                (unsigned int)ntohs(
+                    client_address.sin_port
+                    )
+              );
     }
 }
 
+static int process_http_frames(
+        connection_t *connection
+        )
+{
+    while (
+            io_buffer_size(
+                &connection->input
+                ) > 0
+          ) {
+        http_request_frame_t frame;
+
+        http_frame_result_t result =
+            http_request_frame_inspect(
+                    io_buffer_read_ptr(
+                        &connection->input
+                        ),
+                    io_buffer_size(
+                        &connection->input
+                        ),
+                    &frame
+                    );
+
+        if (result
+                == HTTP_FRAME_INCOMPLETE) {
+
+            return 0;
+        }
+
+        if (result
+                == HTTP_FRAME_ERROR) {
+
+            fprintf(
+                    stderr,
+                    "Connection %llu "
+                    "invalid HTTP framing\n",
+                    (unsigned long long)
+                    connection->id
+                   );
+
+            return -1;
+        }
+
+        connection->requests_received++;
+
+        printf(
+                "Connection %llu "
+                "HTTP request %zu complete: "
+                "header=%zu "
+                "body=%zu "
+                "total=%zu\n",
+                (unsigned long long)
+                connection->id,
+                connection->requests_received,
+                frame.header_bytes,
+                frame.content_length,
+                frame.total_bytes
+              );
+
+        io_buffer_consume(
+                &connection->input,
+                frame.total_bytes
+                );
+    }
+
+    return 0;
+}
 
 static int handle_connection_read(
-    int epoll_fd,
-    connection_t *connection
-)
+        int epoll_fd,
+        connection_t *connection
+        )
 {
     for (;;) {
         if (io_buffer_tail_space(
-                &connection->input)
-            < READ_CHUNK) {
+                    &connection->input)
+                < READ_CHUNK) {
 
             io_buffer_compact(
-                &connection->input
-            );
+                    &connection->input
+                    );
         }
 
         size_t available =
             io_buffer_tail_space(
-                &connection->input
-            );
+                    &connection->input
+                    );
 
         if (available > READ_CHUNK) {
             available = READ_CHUNK;
@@ -401,48 +472,60 @@ static int handle_connection_read(
 
         if (available == 0) {
             fprintf(
-                stderr,
-                "Connection %llu "
-                "input buffer full\n",
-                (unsigned long long)
+                    stderr,
+                    "Connection %llu "
+                    "input buffer full\n",
+                    (unsigned long long)
                     connection->id
-            );
+                   );
 
             connection_destroy(
-                epoll_fd,
-                connection
-            );
+                    epoll_fd,
+                    connection
+                    );
 
             return 1;
         }
 
         ssize_t received = recv(
-            connection->fd,
-            io_buffer_write_ptr(
-                &connection->input),
-            available,
-            0
-        );
+                connection->fd,
+                io_buffer_write_ptr(
+                    &connection->input),
+                available,
+                0
+                );
 
         if (received > 0) {
             io_buffer_produce(
-                &connection->input,
-                (size_t)received
-            );
+                    &connection->input,
+                    (size_t)received
+                    );
 
             connection->bytes_received +=
                 (size_t)received;
 
+
             printf(
-                "Connection %llu FD %d "
-                "read %zd bytes "
-                "(total %zu)\n",
-                (unsigned long long)
+                    "Connection %llu FD %d "
+                    "read %zd bytes "
+                    "(total %zu)\n",
+                    (unsigned long long)
                     connection->id,
-                connection->fd,
-                received,
-                connection->bytes_received
-            );
+                    connection->fd,
+                    received,
+                    connection->bytes_received
+                  );
+
+            if (process_http_frames(
+                        connection) == -1) {
+
+                connection_destroy(
+                        epoll_fd,
+                        connection
+                        );
+
+                return 1;
+            }
 
             /*
              * We do not parse an application
@@ -451,27 +534,37 @@ static int handle_connection_read(
              * For Phase 09, consume the bytes
              * after recording them.
              */
-            io_buffer_consume(
-                &connection->input,
-                io_buffer_size(
-                    &connection->input)
-            );
 
             continue;
         }
 
         if (received == 0) {
             printf(
-                "Connection %llu "
-                "reached EOF\n",
-                (unsigned long long)
+                    "Connection %llu "
+                    "reached EOF\n",
+                    (unsigned long long)
                     connection->id
-            );
+                  );
+
+            if (io_buffer_size(
+                        &connection->input) > 0) {
+
+                printf(
+                        "Connection %llu "
+                        "reached EOF with "
+                        "%zu unframed bytes\n",
+                        (unsigned long long)
+                        connection->id,
+                        io_buffer_size(
+                            &connection->input
+                            )
+                      );
+            }
 
             connection_destroy(
-                epoll_fd,
-                connection
-            );
+                    epoll_fd,
+                    connection
+                    );
 
             return 1;
         }
@@ -481,7 +574,7 @@ static int handle_connection_read(
         }
 
         if (errno == EAGAIN
-            || errno == EWOULDBLOCK) {
+                || errno == EWOULDBLOCK) {
 
             return 0;
         }
@@ -489,9 +582,9 @@ static int handle_connection_read(
         perror("recv");
 
         connection_destroy(
-            epoll_fd,
-            connection
-        );
+                epoll_fd,
+                connection
+                );
 
         return 1;
     }
@@ -499,10 +592,10 @@ static int handle_connection_read(
 
 
 static void handle_client_event(
-    int epoll_fd,
-    connection_t *connection,
-    uint32_t events
-)
+        int epoll_fd,
+        connection_t *connection,
+        uint32_t events
+        )
 {
     /*
      * handle_connection_read() returns 1
@@ -510,29 +603,29 @@ static void handle_client_event(
      */
     int destroyed =
         handle_connection_read(
-            epoll_fd,
-            connection
-        );
+                epoll_fd,
+                connection
+                );
 
     if (destroyed) {
         return;
     }
 
     if ((events
-         & (EPOLLERR | EPOLLHUP))
-        != 0U) {
+                & (EPOLLERR | EPOLLHUP))
+            != 0U) {
 
         printf(
-            "Connection %llu "
-            "received hangup/error\n",
-            (unsigned long long)
+                "Connection %llu "
+                "received hangup/error\n",
+                (unsigned long long)
                 connection->id
-        );
+              );
 
         connection_destroy(
-            epoll_fd,
-            connection
-        );
+                epoll_fd,
+                connection
+                );
 
         return;
     }
@@ -544,11 +637,11 @@ static void handle_client_event(
          * recv() will produce EOF.
          */
         printf(
-            "Connection %llu "
-            "peer performed write shutdown\n",
-            (unsigned long long)
+                "Connection %llu "
+                "peer performed write shutdown\n",
+                (unsigned long long)
                 connection->id
-        );
+              );
     }
 }
 
@@ -556,11 +649,11 @@ static void handle_client_event(
 int main(void)
 {
     setvbuf(
-        stdout,
-        NULL,
-        _IOLBF,
-        0
-    );
+            stdout,
+            NULL,
+            _IOLBF,
+            0
+           );
 
     if (install_signal_handlers() == -1) {
         perror("sigaction");
@@ -579,8 +672,8 @@ int main(void)
 
     int epoll_fd =
         epoll_create1(
-            EPOLL_CLOEXEC
-        );
+                EPOLL_CLOEXEC
+                );
 
     if (epoll_fd == -1) {
         perror("epoll_create1");
@@ -598,10 +691,10 @@ int main(void)
     listener_source.object = NULL;
 
     if (add_event_source(
-            epoll_fd,
-            listener_fd,
-            EPOLLIN,
-            &listener_source) == -1) {
+                epoll_fd,
+                listener_fd,
+                EPOLLIN,
+                &listener_source) == -1) {
 
         perror("epoll_ctl ADD listener");
 
@@ -612,20 +705,20 @@ int main(void)
     }
 
     printf(
-        "Phase 09 epoll server "
-        "listening on 127.0.0.1:%d\n",
-        PORT
-    );
+            "Phase 09 epoll server "
+            "listening on 127.0.0.1:%d\n",
+            PORT
+          );
 
     struct epoll_event events[MAX_EVENTS];
 
     while (!stop_requested) {
         int ready = epoll_wait(
-            epoll_fd,
-            events,
-            MAX_EVENTS,
-            -1
-        );
+                epoll_fd,
+                events,
+                MAX_EVENTS,
+                -1
+                );
 
         if (ready == -1) {
             if (errno == EINTR) {
@@ -637,8 +730,8 @@ int main(void)
         }
 
         for (int i = 0;
-             i < ready;
-             ++i) {
+                i < ready;
+                ++i) {
 
             event_source_t *source =
                 events[i].data.ptr;
@@ -648,12 +741,12 @@ int main(void)
             }
 
             if (source->kind
-                == EVENT_SOURCE_LISTENER) {
+                    == EVENT_SOURCE_LISTENER) {
 
                 if (accept_ready_clients(
-                        epoll_fd,
-                        listener_fd)
-                    == -1) {
+                            epoll_fd,
+                            listener_fd)
+                        == -1) {
 
                     stop_requested = 1;
                     break;
@@ -663,7 +756,7 @@ int main(void)
             }
 
             if (source->kind
-                == EVENT_SOURCE_CLIENT) {
+                    == EVENT_SOURCE_CLIENT) {
 
                 connection_t *connection =
                     source->object;
@@ -673,29 +766,29 @@ int main(void)
                 }
 
                 handle_client_event(
-                    epoll_fd,
-                    connection,
-                    events[i].events
-                );
+                        epoll_fd,
+                        connection,
+                        events[i].events
+                        );
             }
         }
     }
 
     destroy_all_connections(
-        epoll_fd
-    );
+            epoll_fd
+            );
 
     printf(
-    "Stage 1 summary: "
-    "total_connections=%zu "
-    "peak_connections=%zu "
-    "active_connections=%zu "
-    "total_bytes=%zu\n",
-    total_connections,
-    peak_connections,
-    active_connections,
-    total_bytes_received
-);
+            "Stage 1 summary: "
+            "total_connections=%zu "
+            "peak_connections=%zu "
+            "active_connections=%zu "
+            "total_bytes=%zu\n",
+            total_connections,
+            peak_connections,
+            active_connections,
+            total_bytes_received
+          );
 
     if (close(epoll_fd) == -1) {
         perror("close epoll");
@@ -708,9 +801,9 @@ int main(void)
     }
 
     printf(
-        "Phase 09 epoll server "
-        "shut down cleanly\n"
-    );
+            "Phase 09 epoll server "
+            "shut down cleanly\n"
+          );
 
     return EXIT_SUCCESS;
 }
