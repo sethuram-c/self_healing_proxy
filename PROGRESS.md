@@ -368,3 +368,40 @@ Status: COMPLETE
 - Regression tests: PASS
 - ASan/UBSan: PASS
 
+## Phase 13 — Non-Blocking Asynchronous Upstream Connections
+
+Status: COMPLETE
+
+### Concepts Learned
+
+- Proxy downstream and upstream sockets
+- Non-blocking connect()
+- EINPROGRESS
+- Asynchronous TCP connection establishment
+- EPOLLOUT during connect
+- getsockopt()
+- SO_ERROR
+- Backend connection state machines
+- Backend FD ownership
+- Multiple epoll registrations per logical connection
+- Deferred connection-state reclamation
+- Idempotent teardown
+- Backend failure isolation
+
+### Tests
+
+- Non-blocking upstream socket creation: PASS
+- EINPROGRESS handling: PASS
+- Backend epoll registration: PASS
+- SO_ERROR connect completion: PASS
+- Backend A connection: PASS
+- Backend failure isolation: PASS
+- Downstream/backend FD cleanup: PASS
+- Deferred free under event batching: PASS
+- /proc dual-socket inspection: PASS
+- strace asynchronous connect verification: PASS
+- Regression tests: PASS
+- ASan/UBSan: PASS
+
+
+

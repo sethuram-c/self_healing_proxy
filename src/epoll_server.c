@@ -18,6 +18,8 @@
 #define BACKLOG 128
 #define MAX_EVENTS 64
 #define READ_CHUNK 1024
+#define BACKEND_IP "127.0.0.1"
+#define BACKEND_PORT 9001
 
 static volatile sig_atomic_t stop_requested = 0;
 
@@ -25,10 +27,42 @@ static uint64_t next_connection_id = 1;
 
 static connection_t *connections = NULL;
 
+static connection_t *garbage_connections =  NULL;
+
 static size_t total_connections = 0;
 static size_t active_connections = 0;
 static size_t peak_connections = 0;
 static size_t total_bytes_received = 0;
+
+
+static void queue_connection_for_free(
+        connection_t *connection
+        )
+{
+    connection->garbage_next =
+        garbage_connections;
+
+    garbage_connections =
+        connection;
+}
+
+
+static void free_destroyed_connections(void)
+{
+    while (garbage_connections != NULL) {
+        connection_t *connection =
+            garbage_connections;
+
+        garbage_connections =
+            connection->garbage_next;
+
+        connection->garbage_next =
+            NULL;
+
+        connection_free(connection);
+    }
+}
+
 
 static void handle_signal(int signo)
 {
@@ -158,6 +192,32 @@ static int add_event_source(
             );
 }
 
+static int modify_event_source(
+    int epoll_fd,
+    int fd,
+    uint32_t events,
+    event_source_t *source
+)
+{
+    struct epoll_event event;
+
+    memset(
+        &event,
+        0,
+        sizeof(event)
+    );
+
+    event.events = events;
+    event.data.ptr = source;
+
+    return epoll_ctl(
+        epoll_fd,
+        EPOLL_CTL_MOD,
+        fd,
+        &event
+    );
+}
+
 
 static void connection_list_add(
         connection_t *connection
@@ -201,9 +261,10 @@ static void connection_destroy(
         connection_t *connection
         )
 {
-    if (connection == NULL) {
+    if (connection == NULL || connection->destroyed ) {
         return;
     }
+    connection->destroyed = 1;
 
     uint64_t id = connection->id;
     int fd = connection->fd;
@@ -232,11 +293,39 @@ static void connection_destroy(
 
     connection_list_remove(connection);
 
+    if (connection->backend_fd != -1) {
+        if (epoll_ctl(
+                    epoll_fd,
+                    EPOLL_CTL_DEL,
+                    connection->backend_fd,
+                    NULL) == -1) {
+
+            if (errno != ENOENT
+                    && errno != EBADF) {
+
+                perror(
+                        "epoll_ctl DEL backend"
+                      );
+            }
+        }
+
+        if (close(
+                    connection->backend_fd)
+                == -1) {
+
+            perror("close backend");
+        }
+
+        connection->backend_fd = -1;
+    }
+
     if (close(fd) == -1) {
         perror("close client");
     }
+    queue_connection_for_free(
+            connection
+            );
 
-    connection_free(connection);
 
     printf(
             "Connection %llu FD %d "
@@ -260,6 +349,164 @@ static void destroy_all_connections(
                 connections
                 );
     }
+}
+
+static void close_backend(
+        int epoll_fd,
+        connection_t *connection
+        )
+{
+    if (connection->backend_fd == -1) {
+        return;
+    }
+
+    if (epoll_ctl(
+                epoll_fd,
+                EPOLL_CTL_DEL,
+                connection->backend_fd,
+                NULL) == -1) {
+
+        if (errno != ENOENT
+                && errno != EBADF) {
+
+            perror(
+                    "epoll_ctl DEL backend"
+                  );
+        }
+    }
+
+    if (close(
+                connection->backend_fd)
+            == -1) {
+
+        perror("close backend");
+    }
+
+    connection->backend_fd = -1;
+}
+
+
+static int ensure_backend_connection(
+        int epoll_fd,
+        connection_t *connection
+        )
+{
+    if (connection->backend_state
+            != BACKEND_NOT_STARTED) {
+
+        return 0;
+    }
+
+    int backend_fd = -1;
+
+    nonblock_connect_result_t result =
+        start_nonblocking_connect_ipv4(
+                BACKEND_IP,
+                BACKEND_PORT,
+                &backend_fd
+                );
+
+    if (result
+            == NONBLOCK_CONNECT_ERROR) {
+
+        printf(
+                "Connection %llu "
+                "backend connect start failed: %s\n",
+                (unsigned long long)
+                connection->id,
+                strerror(errno)
+              );
+
+        connection->backend_state =
+            BACKEND_FAILED;
+
+        return 0;
+    }
+
+    connection->backend_fd =
+        backend_fd;
+
+    if (result
+            == NONBLOCK_CONNECT_CONNECTED) {
+
+        connection->backend_state =
+            BACKEND_CONNECTED;
+
+        if (add_event_source(
+                    epoll_fd,
+                    backend_fd,
+                    EPOLLRDHUP
+                    | EPOLLERR
+                    | EPOLLHUP,
+                    &connection
+                    ->backend_event_source)
+                == -1) {
+
+            perror(
+                    "epoll_ctl ADD backend"
+                  );
+
+            close_backend(
+                    epoll_fd,
+                    connection
+                    );
+
+            connection->backend_state =
+                BACKEND_FAILED;
+
+            return 0;
+        }
+
+        printf(
+                "Connection %llu "
+                "backend connected immediately "
+                "on FD %d\n",
+                (unsigned long long)
+                connection->id,
+                backend_fd
+              );
+
+        return 0;
+    }
+
+    connection->backend_state =
+        BACKEND_CONNECTING;
+
+    if (add_event_source(
+                epoll_fd,
+                backend_fd,
+                EPOLLOUT
+                | EPOLLERR
+                | EPOLLHUP,
+                &connection
+                ->backend_event_source)
+            == -1) {
+
+        perror(
+                "epoll_ctl ADD backend"
+              );
+
+        close_backend(
+                epoll_fd,
+                connection
+                );
+
+        connection->backend_state =
+            BACKEND_FAILED;
+
+        return 0;
+    }
+
+    printf(
+            "Connection %llu "
+            "backend connect in progress "
+            "on FD %d\n",
+            (unsigned long long)
+            connection->id,
+            backend_fd
+          );
+
+    return 0;
 }
 
 
@@ -379,7 +626,128 @@ static int accept_ready_clients(
     }
 }
 
+
+
+static void handle_backend_event(
+        int epoll_fd,
+        connection_t *connection,
+        uint32_t events
+        )
+{
+    if (connection == NULL
+            || connection->destroyed) {
+
+        return;
+    }
+
+    if (connection->backend_state
+            == BACKEND_CONNECTING) {
+
+        if ((events
+                    & (
+                        EPOLLOUT
+                        | EPOLLERR
+                        | EPOLLHUP
+                      ))
+                == 0U) {
+
+            return;
+        }
+
+        if (finish_nonblocking_connect(
+                    connection->backend_fd)
+                == -1) {
+
+            printf(
+                    "Connection %llu "
+                    "backend connect failed: %s\n",
+                    (unsigned long long)
+                    connection->id,
+                    strerror(errno)
+                  );
+
+            close_backend(
+                    epoll_fd,
+                    connection
+                    );
+
+            connection->backend_state =
+                BACKEND_FAILED;
+
+            return;
+        }
+
+        connection->backend_state =
+            BACKEND_CONNECTED;
+
+        if (modify_event_source(
+                    epoll_fd,
+                    connection->backend_fd,
+                    EPOLLRDHUP
+                    | EPOLLERR
+                    | EPOLLHUP,
+                    &connection
+                    ->backend_event_source)
+                == -1) {
+
+            perror(
+                    "epoll_ctl MOD backend"
+                  );
+
+            close_backend(
+                    epoll_fd,
+                    connection
+                    );
+
+            connection->backend_state =
+                BACKEND_FAILED;
+
+            return;
+        }
+
+        printf(
+                "Connection %llu "
+                "backend connected "
+                "on FD %d\n",
+                (unsigned long long)
+                connection->id,
+                connection->backend_fd
+              );
+
+        return;
+    }
+
+    if (connection->backend_state
+            == BACKEND_CONNECTED
+            && (
+                events
+                & (
+                    EPOLLERR
+                    | EPOLLHUP
+                    | EPOLLRDHUP
+                  )
+               ) != 0U) {
+
+        printf(
+                "Connection %llu "
+                "backend closed/hung up\n",
+                (unsigned long long)
+                connection->id
+              );
+
+        close_backend(
+                epoll_fd,
+                connection
+                );
+
+        connection->backend_state =
+            BACKEND_FAILED;
+    }
+}
+
+
 static int process_http_frames(
+        int epoll_fd,
         connection_t *connection
         )
 {
@@ -419,6 +787,17 @@ static int process_http_frames(
                    );
 
             return -1;
+        }
+
+        if (connection->backend_state
+                == BACKEND_NOT_STARTED) {
+
+            if (ensure_backend_connection(
+                        epoll_fd,
+                        connection) == -1) {
+
+                return -1;
+            }
         }
 
         connection->requests_received++;
@@ -516,7 +895,7 @@ static int handle_connection_read(
                     connection->bytes_received
                   );
 
-            if (process_http_frames(
+            if (process_http_frames( epoll_fd,
                         connection) == -1) {
 
                 connection_destroy(
@@ -646,6 +1025,8 @@ static void handle_client_event(
 }
 
 
+
+
 int main(void)
 {
     setvbuf(
@@ -771,12 +1152,36 @@ int main(void)
                         events[i].events
                         );
             }
+
+            if (source->kind
+                    == EVENT_SOURCE_BACKEND) {
+
+                connection_t *connection =
+                    source->object;
+
+                if (connection == NULL
+                        || connection->destroyed) {
+
+                    continue;
+                }
+
+                handle_backend_event(
+                        epoll_fd,
+                        connection,
+                        events[i].events
+                        );
+
+                continue;
+            }
         }
+        free_destroyed_connections(); 
     }
 
     destroy_all_connections(
             epoll_fd
             );
+
+    free_destroyed_connections();
 
     printf(
             "Stage 1 summary: "

@@ -182,6 +182,7 @@ test-integration: \
 	python3 tests/integration/test_connection_state.py
 	python3 tests/integration/test_mock_backends.py
 	python3 tests/integration/test_http_framing.py	
+	python3 tests/integration/test_upstream_connect.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -247,6 +248,9 @@ sanitize-epoll:
 
 	EPOLL_SERVER_BIN=$(SANITIZED_EPOLL) \
 		python3 tests/stress/test_100_clients.py
+
+	EPOLL_SERVER_BIN=$(SANITIZED_EPOLL) \
+		python3 tests/integration/test_upstream_connect.py
 
 sanitize-http:
 	mkdir -p build

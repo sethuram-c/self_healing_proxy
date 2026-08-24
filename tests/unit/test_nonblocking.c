@@ -20,27 +20,27 @@ static void test_nonblocking_flag(void)
     int sockets[2];
 
     assert(
-        socketpair(
-            AF_UNIX,
-            SOCK_STREAM,
-            0,
-            sockets
-        ) == 0
-    );
+            socketpair(
+                AF_UNIX,
+                SOCK_STREAM,
+                0,
+                sockets
+                ) == 0
+          );
 
     assert(set_nonblocking(sockets[0]) == 0);
 
     int flags = fcntl(
-        sockets[0],
-        F_GETFL,
-        0
-    );
+            sockets[0],
+            F_GETFL,
+            0
+            );
 
     assert(flags != -1);
 
     assert(
-        (flags & O_NONBLOCK) != 0
-    );
+            (flags & O_NONBLOCK) != 0
+          );
 
     close(sockets[0]);
     close(sockets[1]);
@@ -51,13 +51,13 @@ static void test_recv_returns_eagain(void)
     int sockets[2];
 
     assert(
-        socketpair(
-            AF_UNIX,
-            SOCK_STREAM,
-            0,
-            sockets
-        ) == 0
-    );
+            socketpair(
+                AF_UNIX,
+                SOCK_STREAM,
+                0,
+                sockets
+                ) == 0
+          );
 
     assert(set_nonblocking(sockets[0]) == 0);
 
@@ -66,11 +66,11 @@ static void test_recv_returns_eagain(void)
     errno = 0;
 
     ssize_t received = recv(
-        sockets[0],
-        buffer,
-        sizeof(buffer),
-        0
-    );
+            sockets[0],
+            buffer,
+            sizeof(buffer),
+            0
+            );
 
     assert(received == -1);
     assert(would_block(errno));
@@ -78,30 +78,30 @@ static void test_recv_returns_eagain(void)
     const char payload[] = "abc";
 
     ssize_t sent = send(
-        sockets[1],
-        payload,
-        sizeof(payload) - 1,
-        MSG_NOSIGNAL
-    );
+            sockets[1],
+            payload,
+            sizeof(payload) - 1,
+            MSG_NOSIGNAL
+            );
 
     assert(sent == 3);
 
     received = recv(
-        sockets[0],
-        buffer,
-        sizeof(buffer),
-        0
-    );
+            sockets[0],
+            buffer,
+            sizeof(buffer),
+            0
+            );
 
     assert(received == 3);
 
     assert(
-        memcmp(
-            buffer,
-            payload,
-            3
-        ) == 0
-    );
+            memcmp(
+                buffer,
+                payload,
+                3
+                ) == 0
+          );
 
     close(sockets[0]);
     close(sockets[1]);
@@ -110,20 +110,20 @@ static void test_recv_returns_eagain(void)
 static void test_accept_returns_eagain(void)
 {
     int listener = socket(
-        AF_INET,
-        SOCK_STREAM,
-        0
-    );
+            AF_INET,
+            SOCK_STREAM,
+            0
+            );
 
     assert(listener != -1);
 
     struct sockaddr_in address;
 
     memset(
-        &address,
-        0,
-        sizeof(address)
-    );
+            &address,
+            0,
+            sizeof(address)
+          );
 
     address.sin_family = AF_INET;
 
@@ -137,34 +137,54 @@ static void test_accept_returns_eagain(void)
     address.sin_port = htons(0);
 
     assert(
-        bind(
-            listener,
-            (struct sockaddr *)&address,
-            sizeof(address)
-        ) == 0
-    );
+            bind(
+                listener,
+                (struct sockaddr *)&address,
+                sizeof(address)
+                ) == 0
+          );
 
     assert(
-        listen(listener, 8) == 0
-    );
+            listen(listener, 8) == 0
+          );
 
     assert(
-        set_nonblocking(listener) == 0
-    );
+            set_nonblocking(listener) == 0
+          );
 
     errno = 0;
 
     int client_fd = accept(
-        listener,
-        NULL,
-        NULL
-    );
+            listener,
+            NULL,
+            NULL
+            );
 
     assert(client_fd == -1);
     assert(would_block(errno));
 
     close(listener);
 }
+
+static void test_invalid_connect_address(void)
+{
+    int fd = -1;
+
+    nonblock_connect_result_t result =
+        start_nonblocking_connect_ipv4(
+                "not-an-ip-address",
+                9001,
+                &fd
+                );
+
+    assert(
+            result
+            == NONBLOCK_CONNECT_ERROR
+          );
+
+    assert(fd == -1);
+}
+
 
 int main(void)
 {
@@ -175,8 +195,12 @@ int main(void)
     test_accept_returns_eagain();
 
     puts(
-        "nonblocking socket tests passed"
-    );
+            "nonblocking socket tests passed"
+        );
+
+    test_invalid_connect_address(); 
+
+
 
     return 0;
 }
