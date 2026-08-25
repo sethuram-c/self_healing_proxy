@@ -404,4 +404,47 @@ Status: COMPLETE
 - ASan/UBSan: PASS
 
 
+## Phase 14 — Bidirectional Buffered Forwarding
+
+Status: COMPLETE
+
+### Concepts Learned
+
+- End-to-end reverse-proxy data path
+- Client-to-backend buffering
+- Backend-to-client buffering
+- HTTP framing without discarding request bytes
+- Ready-byte accounting for complete HTTP frames
+- Dynamic EPOLLOUT registration
+- Non-blocking request forwarding
+- Non-blocking response forwarding
+- Partial send preservation
+- Client half-close while awaiting a response
+- Backend EOF with downstream drain
+- Two-direction socket lifecycle
+
+### Tests
+
+- Request reaches backend-a: PASS
+- Backend response reaches client: PASS
+- Fragmented request through proxy: PASS
+- HTTP status preserved: PASS
+- Backend identity preserved: PASS
+- Backend EOF handling: PASS
+- Downstream response drain: PASS
+- Dynamic EPOLLOUT handling: PASS
+- Regression tests: PASS
+- ASan/UBSan: PASS
+
+### Current Limitation
+
+The per-direction buffers are still fixed-size. If a producer fills a
+buffer before the consumer can drain it, Phase 14 closes the connection
+safely.
+
+Phase 15 replaces that behavior with true backpressure by pausing reads
+and resuming them when output drains.
+
+
+
 
