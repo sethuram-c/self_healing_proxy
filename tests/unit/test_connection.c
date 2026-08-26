@@ -36,6 +36,13 @@ int main(void)
     assert(connection->client_read_eof == 0);
     assert(connection->backend_read_eof == 0);
 
+    assert(connection->client_read_paused == 0);
+    assert(connection->backend_read_paused == 0);
+    assert(connection->client_pause_count == 0);
+    assert(connection->client_resume_count == 0);
+    assert(connection->backend_pause_count == 0);
+    assert(connection->backend_resume_count == 0);
+
     assert(
         connection->backend_state
         == BACKEND_NOT_STARTED

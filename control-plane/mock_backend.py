@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 MAX_DELAY_MS = 5000
+MAX_BODY_BYTES = 16 * 1024 * 1024
 
 
 class MockBackendHandler(BaseHTTPRequestHandler):
@@ -53,6 +54,30 @@ class MockBackendHandler(BaseHTTPRequestHandler):
 
         self.wfile.write(encoded)
 
+
+    def _send_bytes(
+        self,
+        status,
+        size,
+    ):
+        payload = b"x" * size
+
+        self.send_response(status)
+        self.send_header(
+            "Content-Type",
+            "application/octet-stream",
+        )
+        self.send_header(
+            "Content-Length",
+            str(len(payload)),
+        )
+        self.send_header(
+            "Connection",
+            "close",
+        )
+        self.end_headers()
+        self.wfile.write(payload)
+
     def do_GET(self):
         parsed = urlparse(self.path)
 
@@ -95,9 +120,44 @@ class MockBackendHandler(BaseHTTPRequestHandler):
                 delay_ms / 1000.0
             )
 
+        body_bytes = 0
+
+        if "body_bytes" in query:
+            try:
+                body_bytes = int(
+                    query["body_bytes"][0]
+                )
+            except ValueError:
+                body_bytes = 0
+
+        body_bytes = max(
+            0,
+            min(
+                body_bytes,
+                MAX_BODY_BYTES,
+            ),
+        )
+
         backend_name = (
             self.server.backend_name
         )
+
+        if parsed.path == "/bytes":
+            print(
+                f"{backend_name}: "
+                f"GET {parsed.path} "
+                f"status={status} "
+                f"delay_ms={delay_ms} "
+                f"body_bytes={body_bytes}",
+                flush=True,
+            )
+
+            self._send_bytes(
+                status,
+                body_bytes,
+            )
+
+            return
 
         body = {
             "backend": backend_name,

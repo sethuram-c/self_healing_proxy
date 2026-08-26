@@ -45,6 +45,14 @@ typedef struct connection {
     int client_read_eof;
     int backend_read_eof;
 
+    int client_read_paused;
+    int backend_read_paused;
+
+    size_t client_pause_count;
+    size_t client_resume_count;
+    size_t backend_pause_count;
+    size_t backend_resume_count;
+
     backend_state_t backend_state;
 
     event_source_t event_source;

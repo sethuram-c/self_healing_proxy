@@ -447,4 +447,43 @@ and resuming them when output drains.
 
 
 
+## Phase 15 — Partial Writes and Backpressure
+
+Status: IN PROGRESS
+
+### Concepts Learned
+
+- Non-blocking partial writes
+- send() short-write preservation
+- EAGAIN/EWOULDBLOCK on output
+- Producer/consumer imbalance
+- Backpressure
+- High-water and low-water marks
+- Dynamic EPOLLIN throttling
+- Dynamic EPOLLOUT draining
+- Client read pause/resume
+- Backend read pause/resume
+- Bounded userspace buffers
+- Slow-consumer protection
+- Flow-control state transitions
+
+### Tests
+
+- Partial send preservation: PASS
+- Client-to-backend buffering: PASS
+- Backend-to-client buffering: PASS
+- Slow downstream client: PASS
+- Large backend response: PASS
+- Backend EPOLLIN pause: PASS
+- Backend EPOLLIN resume: PASS
+- Full response integrity after pause/resume: PASS
+- Existing bidirectional forwarding: PASS
+- Regression tests: PENDING
+- ASan/UBSan: PENDING
+
+### Current Limitation
+
+HTTP request framing still uses a bounded fixed-size request buffer. A single
+request that cannot be framed within that bound is rejected rather than grown
+dynamically. This is intentional for the current learning stage.
 

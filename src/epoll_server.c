@@ -21,6 +21,12 @@
 #define BACKEND_IP "127.0.0.1"
 #define BACKEND_PORT 9001
 
+#define BUFFER_HIGH_WATERMARK \
+    ((IO_BUFFER_CAPACITY * 3U) / 4U)
+
+#define BUFFER_LOW_WATERMARK \
+    (IO_BUFFER_CAPACITY / 4U)
+
 static volatile sig_atomic_t stop_requested = 0;
 
 static uint64_t next_connection_id = 1;
@@ -297,13 +303,18 @@ static void connection_destroy(
     printf(
         "Connection %llu FD %d closed after "
         "%zu client bytes, %zu HTTP requests, "
-        "%zu bytes to backend, %zu bytes to client\n",
+        "%zu bytes to backend, %zu bytes to client, "
+        "client pauses=%zu/%zu, backend pauses=%zu/%zu\n",
         (unsigned long long)id,
         fd,
         bytes,
         requests,
         to_backend,
-        from_backend
+        from_backend,
+        connection->client_pause_count,
+        connection->client_resume_count,
+        connection->backend_pause_count,
+        connection->backend_resume_count
     );
 }
 
@@ -331,7 +342,9 @@ static int update_client_interest(
     uint32_t events =
         EPOLLERR | EPOLLHUP | EPOLLRDHUP;
 
-    if (!connection->client_read_eof) {
+    if (!connection->client_read_eof
+        && !connection->client_read_paused) {
+
         events |= EPOLLIN;
     }
 
@@ -348,6 +361,7 @@ static int update_client_interest(
         &connection->event_source
     );
 }
+
 
 static int update_backend_interest(
     int epoll_fd,
@@ -367,7 +381,11 @@ static int update_backend_interest(
     } else if (connection->backend_state
                == BACKEND_CONNECTED) {
 
-        events |= EPOLLIN | EPOLLRDHUP;
+        events |= EPOLLRDHUP;
+
+        if (!connection->backend_read_paused) {
+            events |= EPOLLIN;
+        }
 
         if (connection->client_bytes_ready > 0) {
             events |= EPOLLOUT;
@@ -379,6 +397,119 @@ static int update_backend_interest(
         connection->backend_fd,
         events,
         &connection->backend_event_source
+    );
+}
+
+
+
+static void pause_client_read(
+    connection_t *connection
+)
+{
+    if (connection->client_read_paused
+        || connection->client_read_eof) {
+
+        return;
+    }
+
+    connection->client_read_paused = 1;
+    connection->client_pause_count++;
+
+    printf(
+        "Connection %llu client read paused: "
+        "buffered=%zu ready=%zu\n",
+        (unsigned long long)connection->id,
+        io_buffer_size(
+            &connection->client_to_backend
+        ),
+        connection->client_bytes_ready
+    );
+}
+
+static void maybe_resume_client_read(
+    connection_t *connection
+)
+{
+    if (!connection->client_read_paused
+        || connection->client_read_eof) {
+
+        return;
+    }
+
+    if (io_buffer_size(
+            &connection->client_to_backend)
+        > BUFFER_LOW_WATERMARK) {
+
+        return;
+    }
+
+    connection->client_read_paused = 0;
+    connection->client_resume_count++;
+
+    printf(
+        "Connection %llu client read resumed: "
+        "buffered=%zu\n",
+        (unsigned long long)connection->id,
+        io_buffer_size(
+            &connection->client_to_backend
+        )
+    );
+}
+
+static void pause_backend_read(
+    connection_t *connection
+)
+{
+    if (connection->backend_read_paused
+        || connection->backend_read_eof
+        || connection->backend_state
+           != BACKEND_CONNECTED) {
+
+        return;
+    }
+
+    connection->backend_read_paused = 1;
+    connection->backend_pause_count++;
+
+    printf(
+        "Connection %llu backend read paused: "
+        "buffered=%zu\n",
+        (unsigned long long)connection->id,
+        io_buffer_size(
+            &connection->backend_to_client
+        )
+    );
+}
+
+static void maybe_resume_backend_read(
+    connection_t *connection
+)
+{
+    if (!connection->backend_read_paused
+        || connection->backend_read_eof
+        || connection->backend_state
+           != BACKEND_CONNECTED) {
+
+        return;
+    }
+
+    if (io_buffer_size(
+            &connection->backend_to_client)
+        > BUFFER_LOW_WATERMARK) {
+
+        return;
+    }
+
+    connection->backend_read_paused = 0;
+    connection->backend_resume_count++;
+
+    printf(
+        "Connection %llu backend read resumed: "
+        "buffered=%zu\n",
+        (unsigned long long)connection->id,
+        io_buffer_size(
+            &connection->backend_to_client
+        )
     );
 }
 
@@ -429,6 +560,8 @@ static int flush_backend_to_client(
         return -1;
     }
 
+    maybe_resume_backend_read(connection);
+
     if (!connection->destroyed
         && update_client_interest(
                epoll_fd,
@@ -439,8 +572,20 @@ static int flush_backend_to_client(
         return -1;
     }
 
+    if (!connection->destroyed
+        && connection->backend_fd != -1
+        && update_backend_interest(
+               epoll_fd,
+               connection) == -1) {
+
+        perror("epoll_ctl MOD backend");
+        connection_destroy(epoll_fd, connection);
+        return -1;
+    }
+
     return 0;
 }
+
 
 static int flush_client_to_backend(
     int epoll_fd,
@@ -496,6 +641,8 @@ static int flush_client_to_backend(
         return -1;
     }
 
+    maybe_resume_client_read(connection);
+
     if (!connection->destroyed
         && update_backend_interest(
                epoll_fd,
@@ -506,8 +653,19 @@ static int flush_client_to_backend(
         return -1;
     }
 
+    if (!connection->destroyed
+        && update_client_interest(
+               epoll_fd,
+               connection) == -1) {
+
+        perror("epoll_ctl MOD client");
+        connection_destroy(epoll_fd, connection);
+        return -1;
+    }
+
     return 0;
 }
+
 
 static int ensure_backend_connection(
     int epoll_fd,
@@ -714,6 +872,30 @@ static int handle_client_read(
             }
         }
 
+        size_t buffered = io_buffer_size(
+            &connection->client_to_backend
+        );
+
+        if (buffered >= BUFFER_HIGH_WATERMARK
+            && connection->client_bytes_ready > 0) {
+
+            pause_client_read(connection);
+
+            if (update_client_interest(
+                    epoll_fd,
+                    connection) == -1) {
+
+                perror("epoll_ctl MOD client");
+                connection_destroy(
+                    epoll_fd,
+                    connection
+                );
+                return 1;
+            }
+
+            return 0;
+        }
+
         if (io_buffer_tail_space(
                 &connection->client_to_backend)
             < READ_CHUNK) {
@@ -732,10 +914,28 @@ static int handle_client_read(
         }
 
         if (available == 0) {
+            if (connection->client_bytes_ready > 0) {
+                pause_client_read(connection);
+
+                if (update_client_interest(
+                        epoll_fd,
+                        connection) == -1) {
+
+                    perror("epoll_ctl MOD client");
+                    connection_destroy(
+                        epoll_fd,
+                        connection
+                    );
+                    return 1;
+                }
+
+                return 0;
+            }
+
             fprintf(
                 stderr,
-                "Connection %llu client-to-backend "
-                "buffer full\n",
+                "Connection %llu request exceeds "
+                "client framing buffer\n",
                 (unsigned long long)connection->id
             );
 
@@ -761,15 +961,6 @@ static int handle_client_read(
             connection->bytes_received +=
                 (size_t)received;
 
-            printf(
-                "Connection %llu client FD %d "
-                "read %zd bytes (total %zu)\n",
-                (unsigned long long)connection->id,
-                connection->fd,
-                received,
-                connection->bytes_received
-            );
-
             if (process_http_frames(
                     epoll_fd,
                     connection) == -1) {
@@ -791,6 +982,30 @@ static int handle_client_read(
 
                     return 1;
                 }
+            }
+
+            buffered = io_buffer_size(
+                &connection->client_to_backend
+            );
+
+            if (buffered >= BUFFER_HIGH_WATERMARK
+                && connection->client_bytes_ready > 0) {
+
+                pause_client_read(connection);
+
+                if (update_client_interest(
+                        epoll_fd,
+                        connection) == -1) {
+
+                    perror("epoll_ctl MOD client");
+                    connection_destroy(
+                        epoll_fd,
+                        connection
+                    );
+                    return 1;
+                }
+
+                return 0;
             }
 
             continue;
@@ -855,12 +1070,50 @@ static int handle_client_read(
     }
 }
 
+
 static int handle_backend_read(
     int epoll_fd,
     connection_t *connection
 )
 {
     for (;;) {
+        if (io_buffer_size(
+                &connection->backend_to_client) > 0) {
+
+            if (flush_backend_to_client(
+                    epoll_fd,
+                    connection) == -1) {
+
+                return 1;
+            }
+        }
+
+        if (connection->destroyed) {
+            return 1;
+        }
+
+        size_t buffered = io_buffer_size(
+            &connection->backend_to_client
+        );
+
+        if (buffered >= BUFFER_HIGH_WATERMARK) {
+            pause_backend_read(connection);
+
+            if (update_backend_interest(
+                    epoll_fd,
+                    connection) == -1) {
+
+                perror("epoll_ctl MOD backend");
+                connection_destroy(
+                    epoll_fd,
+                    connection
+                );
+                return 1;
+            }
+
+            return 0;
+        }
+
         if (io_buffer_tail_space(
                 &connection->backend_to_client)
             < READ_CHUNK) {
@@ -879,15 +1132,21 @@ static int handle_backend_read(
         }
 
         if (available == 0) {
-            fprintf(
-                stderr,
-                "Connection %llu backend-to-client "
-                "buffer full\n",
-                (unsigned long long)connection->id
-            );
+            pause_backend_read(connection);
 
-            connection_destroy(epoll_fd, connection);
-            return 1;
+            if (update_backend_interest(
+                    epoll_fd,
+                    connection) == -1) {
+
+                perror("epoll_ctl MOD backend");
+                connection_destroy(
+                    epoll_fd,
+                    connection
+                );
+                return 1;
+            }
+
+            return 0;
         }
 
         ssize_t received = recv(
@@ -908,15 +1167,6 @@ static int handle_backend_read(
             connection->backend_bytes_received +=
                 (size_t)received;
 
-            printf(
-                "Connection %llu backend FD %d "
-                "read %zd bytes (total %zu)\n",
-                (unsigned long long)connection->id,
-                connection->backend_fd,
-                received,
-                connection->backend_bytes_received
-            );
-
             if (flush_backend_to_client(
                     epoll_fd,
                     connection) == -1) {
@@ -924,11 +1174,38 @@ static int handle_backend_read(
                 return 1;
             }
 
+            if (connection->destroyed) {
+                return 1;
+            }
+
+            if (io_buffer_size(
+                    &connection->backend_to_client)
+                >= BUFFER_HIGH_WATERMARK) {
+
+                pause_backend_read(connection);
+
+                if (update_backend_interest(
+                        epoll_fd,
+                        connection) == -1) {
+
+                    perror("epoll_ctl MOD backend");
+                    connection_destroy(
+                        epoll_fd,
+                        connection
+                    );
+                    return 1;
+                }
+
+                return 0;
+            }
+
             continue;
         }
 
         if (received == 0) {
             connection->backend_read_eof = 1;
+            connection->backend_state =
+                BACKEND_CLOSED;
 
             printf(
                 "Connection %llu backend reached EOF\n",
@@ -936,12 +1213,23 @@ static int handle_backend_read(
             );
 
             close_backend(epoll_fd, connection);
-            connection->backend_state =
-                BACKEND_CLOSED;
 
             if (io_buffer_size(
-                    &connection->backend_to_client) == 0) {
+                    &connection->backend_to_client)
+                == 0) {
 
+                connection_destroy(
+                    epoll_fd,
+                    connection
+                );
+                return 1;
+            }
+
+            if (update_client_interest(
+                    epoll_fd,
+                    connection) == -1) {
+
+                perror("epoll_ctl MOD client");
                 connection_destroy(
                     epoll_fd,
                     connection
@@ -969,6 +1257,7 @@ static int handle_backend_read(
         return 1;
     }
 }
+
 
 static void handle_backend_event(
     int epoll_fd,
@@ -1059,7 +1348,8 @@ static void handle_backend_event(
 
     if ((events
          & (EPOLLIN | EPOLLRDHUP | EPOLLHUP))
-        != 0U) {
+        != 0U
+        && !connection->backend_read_paused) {
 
         if (handle_backend_read(
                 epoll_fd,
@@ -1101,6 +1391,7 @@ static void handle_backend_event(
     }
 }
 
+
 static void handle_client_event(
     int epoll_fd,
     connection_t *connection,
@@ -1130,7 +1421,8 @@ static void handle_client_event(
     }
 
     if ((events & (EPOLLIN | EPOLLRDHUP)) != 0U
-        && !connection->client_read_eof) {
+        && !connection->client_read_eof
+        && !connection->client_read_paused) {
 
         if (handle_client_read(
                 epoll_fd,
@@ -1161,6 +1453,7 @@ static void handle_client_event(
         connection_destroy(epoll_fd, connection);
     }
 }
+
 
 static int accept_ready_clients(
     int epoll_fd,
