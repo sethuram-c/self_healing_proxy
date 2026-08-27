@@ -43,6 +43,12 @@ int main(void)
     assert(connection->backend_pause_count == 0);
     assert(connection->backend_resume_count == 0);
 
+    assert(connection->accepted_at_ms == 0);
+    assert(connection->last_activity_ms == 0);
+    assert(connection->request_started_at_ms == 0);
+    assert(connection->backend_connect_started_at_ms == 0);
+    assert(connection->response_wait_started_at_ms == 0);
+
     assert(
         connection->backend_state
         == BACKEND_NOT_STARTED

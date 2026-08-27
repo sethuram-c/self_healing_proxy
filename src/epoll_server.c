@@ -6,12 +6,14 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #define PORT 8081
@@ -20,6 +22,12 @@
 #define READ_CHUNK 1024
 #define BACKEND_IP "127.0.0.1"
 #define BACKEND_PORT 9001
+
+#define DEFAULT_CONNECT_TIMEOUT_MS 3000ULL
+#define DEFAULT_IDLE_TIMEOUT_MS 30000ULL
+#define DEFAULT_REQUEST_TIMEOUT_MS 10000ULL
+#define DEFAULT_RESPONSE_TIMEOUT_MS 10000ULL
+#define MAX_TIMEOUT_MS 3600000ULL
 
 #define BUFFER_HIGH_WATERMARK \
     ((IO_BUFFER_CAPACITY * 3U) / 4U)
@@ -38,6 +46,120 @@ static size_t total_connections = 0;
 static size_t active_connections = 0;
 static size_t peak_connections = 0;
 static size_t total_bytes_received = 0;
+static size_t total_timeouts = 0;
+
+typedef struct {
+    uint64_t connect_ms;
+    uint64_t idle_ms;
+    uint64_t request_ms;
+    uint64_t response_ms;
+} timeout_config_t;
+
+static timeout_config_t timeout_config = {
+    DEFAULT_CONNECT_TIMEOUT_MS,
+    DEFAULT_IDLE_TIMEOUT_MS,
+    DEFAULT_REQUEST_TIMEOUT_MS,
+    DEFAULT_RESPONSE_TIMEOUT_MS
+};
+
+static uint64_t monotonic_ms(void)
+{
+    struct timespec now;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+        perror("clock_gettime");
+        return 1;
+    }
+
+    return ((uint64_t)now.tv_sec * 1000ULL)
+        + ((uint64_t)now.tv_nsec / 1000000ULL);
+}
+
+static uint64_t elapsed_ms(
+    uint64_t now_ms,
+    uint64_t started_ms
+)
+{
+    if (now_ms < started_ms) {
+        return 0;
+    }
+
+    return now_ms - started_ms;
+}
+
+static int parse_timeout_env(
+    const char *name,
+    uint64_t *value
+)
+{
+    const char *text = getenv(name);
+
+    if (text == NULL || *text == '\0') {
+        return 0;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    unsigned long long parsed = strtoull(
+        text,
+        &end,
+        10
+    );
+
+    if (errno != 0
+        || end == text
+        || *end != '\0'
+        || parsed == 0
+        || parsed > MAX_TIMEOUT_MS) {
+
+        fprintf(
+            stderr,
+            "Invalid %s=%s; expected 1..%llu milliseconds\n",
+            name,
+            text,
+            (unsigned long long)MAX_TIMEOUT_MS
+        );
+
+        return -1;
+    }
+
+    *value = (uint64_t)parsed;
+    return 0;
+}
+
+static int load_timeout_config(void)
+{
+    if (parse_timeout_env(
+            "MICROPROXY_CONNECT_TIMEOUT_MS",
+            &timeout_config.connect_ms) == -1) {
+        return -1;
+    }
+
+    if (parse_timeout_env(
+            "MICROPROXY_IDLE_TIMEOUT_MS",
+            &timeout_config.idle_ms) == -1) {
+        return -1;
+    }
+
+    if (parse_timeout_env(
+            "MICROPROXY_REQUEST_TIMEOUT_MS",
+            &timeout_config.request_ms) == -1) {
+        return -1;
+    }
+
+    if (parse_timeout_env(
+            "MICROPROXY_RESPONSE_TIMEOUT_MS",
+            &timeout_config.response_ms) == -1) {
+        return -1;
+    }
+
+    return 0;
+}
+
+static void note_activity(connection_t *connection)
+{
+    connection->last_activity_ms = monotonic_ms();
+}
 
 static void queue_connection_for_free(
     connection_t *connection
@@ -541,6 +663,8 @@ static int flush_backend_to_client(
             connection->bytes_forwarded_to_client +=
                 (size_t)sent;
 
+            note_activity(connection);
+
             continue;
         }
 
@@ -617,8 +741,18 @@ static int flush_client_to_backend(
             connection->client_bytes_ready -=
                 (size_t)sent;
 
+            if (connection->bytes_forwarded_to_backend == 0
+                && connection->backend_bytes_received == 0
+                && connection->response_wait_started_at_ms == 0) {
+
+                connection->response_wait_started_at_ms =
+                    monotonic_ms();
+            }
+
             connection->bytes_forwarded_to_backend +=
                 (size_t)sent;
+
+            note_activity(connection);
 
             continue;
         }
@@ -708,6 +842,8 @@ static int ensure_backend_connection(
 
         connection->backend_state =
             BACKEND_CONNECTED;
+        connection->backend_connect_started_at_ms = 0;
+        note_activity(connection);
 
         uint32_t events =
             EPOLLIN
@@ -748,6 +884,8 @@ static int ensure_backend_connection(
 
     connection->backend_state =
         BACKEND_CONNECTING;
+    connection->backend_connect_started_at_ms =
+        monotonic_ms();
 
     if (add_event_source(
             epoll_fd,
@@ -810,6 +948,13 @@ static int process_http_frames(
             );
 
         if (result == HTTP_FRAME_INCOMPLETE) {
+            if (unframed > 0
+                && connection->request_started_at_ms == 0) {
+
+                connection->request_started_at_ms =
+                    monotonic_ms();
+            }
+
             return 0;
         }
 
@@ -827,6 +972,7 @@ static int process_http_frames(
 
         connection->client_bytes_ready +=
             frame.total_bytes;
+        connection->request_started_at_ms = 0;
 
         connection->requests_received++;
 
@@ -960,6 +1106,7 @@ static int handle_client_read(
 
             connection->bytes_received +=
                 (size_t)received;
+            note_activity(connection);
 
             if (process_http_frames(
                     epoll_fd,
@@ -1031,6 +1178,18 @@ static int handle_client_read(
                         &connection->client_to_backend
                     ) - connection->client_bytes_ready
                 );
+
+                connection_destroy(
+                    epoll_fd,
+                    connection
+                );
+                return 1;
+            }
+
+            if (connection->backend_state == BACKEND_NOT_STARTED
+                && connection->client_bytes_ready == 0
+                && io_buffer_size(
+                       &connection->backend_to_client) == 0) {
 
                 connection_destroy(
                     epoll_fd,
@@ -1166,6 +1325,8 @@ static int handle_backend_read(
 
             connection->backend_bytes_received +=
                 (size_t)received;
+            connection->response_wait_started_at_ms = 0;
+            note_activity(connection);
 
             if (flush_backend_to_client(
                     epoll_fd,
@@ -1299,6 +1460,8 @@ static void handle_backend_event(
 
         connection->backend_state =
             BACKEND_CONNECTED;
+        connection->backend_connect_started_at_ms = 0;
+        note_activity(connection);
 
         printf(
             "Connection %llu backend connected "
@@ -1455,6 +1618,231 @@ static void handle_client_event(
 }
 
 
+static int timer_remaining_ms(
+    uint64_t now_ms,
+    uint64_t started_ms,
+    uint64_t timeout_ms
+)
+{
+    if (started_ms == 0) {
+        return INT_MAX;
+    }
+
+    uint64_t elapsed = elapsed_ms(
+        now_ms,
+        started_ms
+    );
+
+    if (elapsed >= timeout_ms) {
+        return 0;
+    }
+
+    uint64_t remaining = timeout_ms - elapsed;
+
+    if (remaining > (uint64_t)INT_MAX) {
+        return INT_MAX;
+    }
+
+    return (int)remaining;
+}
+
+static int connection_wait_timeout_ms(
+    const connection_t *connection,
+    uint64_t now_ms
+)
+{
+    int nearest = timer_remaining_ms(
+        now_ms,
+        connection->last_activity_ms,
+        timeout_config.idle_ms
+    );
+
+    int remaining = timer_remaining_ms(
+        now_ms,
+        connection->request_started_at_ms,
+        timeout_config.request_ms
+    );
+
+    if (remaining < nearest) {
+        nearest = remaining;
+    }
+
+    if (connection->backend_state == BACKEND_CONNECTING) {
+        remaining = timer_remaining_ms(
+            now_ms,
+            connection->backend_connect_started_at_ms,
+            timeout_config.connect_ms
+        );
+
+        if (remaining < nearest) {
+            nearest = remaining;
+        }
+    }
+
+    remaining = timer_remaining_ms(
+        now_ms,
+        connection->response_wait_started_at_ms,
+        timeout_config.response_ms
+    );
+
+    if (remaining < nearest) {
+        nearest = remaining;
+    }
+
+    return nearest;
+}
+
+static int compute_epoll_wait_timeout_ms(
+    uint64_t now_ms
+)
+{
+    if (connections == NULL) {
+        return -1;
+    }
+
+    int nearest = INT_MAX;
+
+    for (connection_t *connection = connections;
+         connection != NULL;
+         connection = connection->next) {
+
+        if (connection->destroyed) {
+            continue;
+        }
+
+        int remaining = connection_wait_timeout_ms(
+            connection,
+            now_ms
+        );
+
+        if (remaining < nearest) {
+            nearest = remaining;
+        }
+    }
+
+    if (nearest == INT_MAX) {
+        return -1;
+    }
+
+    return nearest;
+}
+
+static void timeout_connection(
+    int epoll_fd,
+    connection_t *connection,
+    const char *kind,
+    uint64_t elapsed
+)
+{
+    printf(
+        "Connection %llu %s timeout after %llu ms\n",
+        (unsigned long long)connection->id,
+        kind,
+        (unsigned long long)elapsed
+    );
+
+    total_timeouts++;
+    connection_destroy(epoll_fd, connection);
+}
+
+static void check_connection_timeouts(
+    int epoll_fd,
+    uint64_t now_ms
+)
+{
+    connection_t *connection = connections;
+
+    while (connection != NULL) {
+        connection_t *next = connection->next;
+
+        if (connection->destroyed) {
+            connection = next;
+            continue;
+        }
+
+        if (connection->backend_state == BACKEND_CONNECTING
+            && connection->backend_connect_started_at_ms != 0
+            && elapsed_ms(
+                   now_ms,
+                   connection->backend_connect_started_at_ms)
+               >= timeout_config.connect_ms) {
+
+            connection->backend_state = BACKEND_FAILED;
+            timeout_connection(
+                epoll_fd,
+                connection,
+                "backend connect",
+                elapsed_ms(
+                    now_ms,
+                    connection->backend_connect_started_at_ms
+                )
+            );
+
+            connection = next;
+            continue;
+        }
+
+        if (connection->request_started_at_ms != 0
+            && elapsed_ms(
+                   now_ms,
+                   connection->request_started_at_ms)
+               >= timeout_config.request_ms) {
+
+            timeout_connection(
+                epoll_fd,
+                connection,
+                "HTTP request",
+                elapsed_ms(
+                    now_ms,
+                    connection->request_started_at_ms
+                )
+            );
+
+            connection = next;
+            continue;
+        }
+
+        if (connection->response_wait_started_at_ms != 0
+            && elapsed_ms(
+                   now_ms,
+                   connection->response_wait_started_at_ms)
+               >= timeout_config.response_ms) {
+
+            timeout_connection(
+                epoll_fd,
+                connection,
+                "backend response",
+                elapsed_ms(
+                    now_ms,
+                    connection->response_wait_started_at_ms
+                )
+            );
+
+            connection = next;
+            continue;
+        }
+
+        if (connection->last_activity_ms != 0
+            && elapsed_ms(
+                   now_ms,
+                   connection->last_activity_ms)
+               >= timeout_config.idle_ms) {
+
+            timeout_connection(
+                epoll_fd,
+                connection,
+                "idle",
+                elapsed_ms(
+                    now_ms,
+                    connection->last_activity_ms
+                )
+            );
+        }
+
+        connection = next;
+    }
+}
+
 static int accept_ready_clients(
     int epoll_fd,
     int listener_fd
@@ -1502,6 +1890,10 @@ static int accept_ready_clients(
             close(client_fd);
             continue;
         }
+
+        uint64_t accepted_ms = monotonic_ms();
+        connection->accepted_at_ms = accepted_ms;
+        connection->last_activity_ms = accepted_ms;
 
         connection_list_add(connection);
 
@@ -1557,6 +1949,10 @@ int main(void)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
 
+    if (load_timeout_config() == -1) {
+        return EXIT_FAILURE;
+    }
+
     if (install_signal_handlers() == -1) {
         perror("sigaction");
         return EXIT_FAILURE;
@@ -1600,14 +1996,36 @@ int main(void)
         PORT
     );
 
+    printf(
+        "Timeouts: connect=%llu ms idle=%llu ms "
+        "request=%llu ms response=%llu ms\n",
+        (unsigned long long)timeout_config.connect_ms,
+        (unsigned long long)timeout_config.idle_ms,
+        (unsigned long long)timeout_config.request_ms,
+        (unsigned long long)timeout_config.response_ms
+    );
+
     struct epoll_event events[MAX_EVENTS];
 
     while (!stop_requested) {
+        uint64_t before_wait_ms = monotonic_ms();
+
+        check_connection_timeouts(
+            epoll_fd,
+            before_wait_ms
+        );
+        free_destroyed_connections();
+
+        int wait_timeout_ms =
+            compute_epoll_wait_timeout_ms(
+                monotonic_ms()
+            );
+
         int ready = epoll_wait(
             epoll_fd,
             events,
             MAX_EVENTS,
-            -1
+            wait_timeout_ms
         );
 
         if (ready == -1) {
@@ -1617,6 +2035,10 @@ int main(void)
 
             perror("epoll_wait");
             break;
+        }
+
+        if (ready == 0) {
+            continue;
         }
 
         for (int i = 0; i < ready; ++i) {
@@ -1692,11 +2114,13 @@ int main(void)
         "Proxy summary: total_connections=%zu "
         "peak_connections=%zu "
         "active_connections=%zu "
-        "total_client_bytes=%zu\n",
+        "total_client_bytes=%zu "
+        "timeouts=%zu\n",
         total_connections,
         peak_connections,
         active_connections,
-        total_bytes_received
+        total_bytes_received,
+        total_timeouts
     );
 
     if (close(epoll_fd) == -1) {

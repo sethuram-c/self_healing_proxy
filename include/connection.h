@@ -53,6 +53,12 @@ typedef struct connection {
     size_t backend_pause_count;
     size_t backend_resume_count;
 
+    uint64_t accepted_at_ms;
+    uint64_t last_activity_ms;
+    uint64_t request_started_at_ms;
+    uint64_t backend_connect_started_at_ms;
+    uint64_t response_wait_started_at_ms;
+
     backend_state_t backend_state;
 
     event_source_t event_source;

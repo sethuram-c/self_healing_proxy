@@ -171,6 +171,7 @@ test-integration: \
 	python3 tests/integration/test_upstream_connect.py
 	python3 tests/integration/test_bidirectional_proxy.py
 	python3 tests/integration/test_backpressure.py
+	python3 tests/integration/test_timeouts.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -241,6 +242,8 @@ sanitize-epoll:
 		python3 tests/integration/test_bidirectional_proxy.py
 	EPOLL_SERVER_BIN=$(SANITIZED_EPOLL) \
 		python3 tests/integration/test_backpressure.py
+	EPOLL_SERVER_BIN=$(SANITIZED_EPOLL) \
+		python3 tests/integration/test_timeouts.py
 	EPOLL_SERVER_BIN=$(SANITIZED_EPOLL) \
 		python3 tests/stress/test_100_clients.py
 

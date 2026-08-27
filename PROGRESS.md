@@ -487,3 +487,56 @@ HTTP request framing still uses a bounded fixed-size request buffer. A single
 request that cannot be framed within that bound is rejected rather than grown
 dynamically. This is intentional for the current learning stage.
 
+
+## Phase 16 — Connection and Upstream Timeouts
+
+Status: IN PROGRESS
+
+### Concepts Learned
+
+- CLOCK_MONOTONIC for elapsed-time decisions
+- Deadline-driven epoll_wait timeouts
+- Backend connect timeout state
+- Incomplete HTTP request timeout
+- Backend response-start timeout
+- Idle connection timeout
+- Per-connection activity timestamps
+- Runtime timeout configuration through environment variables
+- Timeout cleanup through the existing deferred-reclamation path
+- Timeout observability and counters
+
+### Timeout Defaults
+
+- Backend connect: 3000 ms
+- Idle connection: 30000 ms
+- Incomplete HTTP request: 10000 ms
+- Backend response start: 10000 ms
+
+The defaults can be overridden with:
+
+- MICROPROXY_CONNECT_TIMEOUT_MS
+- MICROPROXY_IDLE_TIMEOUT_MS
+- MICROPROXY_REQUEST_TIMEOUT_MS
+- MICROPROXY_RESPONSE_TIMEOUT_MS
+
+### Tests
+
+- Idle connection timeout: PASS in review build
+- Incomplete request timeout: PASS in review build
+- Backend response-start timeout: PASS in review build
+- Invalid timeout configuration: PASS in review build
+- Existing bidirectional forwarding: PASS in review build
+- Backpressure regression: PASS in review build
+- 100-client stress regression: PASS in review build
+- Phase 16 ASan/UBSan epoll suite: PASS in review build
+- Full local `make test` / `make sanitize`: PENDING USER GATE
+
+### Scope Note
+
+The backend response timeout currently protects time-to-first-byte. Full HTTP
+response-completion deadlines require upstream HTTP response framing, which is
+not yet part of the proxy data model.
+
+### Next Phase
+
+Phase 17 — Round-robin backend selection.
