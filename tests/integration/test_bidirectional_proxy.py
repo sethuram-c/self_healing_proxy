@@ -164,7 +164,7 @@ class BidirectionalProxyTests(unittest.TestCase):
                 stdout,
             )
             self.assertIn(
-                "backend connected",
+                "backend-a connected",
                 stdout,
             )
             self.assertIn(

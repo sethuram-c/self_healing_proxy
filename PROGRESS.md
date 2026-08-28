@@ -540,3 +540,46 @@ not yet part of the proxy data model.
 ### Next Phase
 
 Phase 17 — Round-robin backend selection.
+
+
+## Phase 17 — Round-Robin Backend Selection
+
+Status: IN PROGRESS
+
+### Concepts Learned
+
+- Backend pool abstraction
+- Deterministic round-robin selection
+- Separating routing policy from socket lifecycle
+- Per-connection backend identity
+- Selection at first upstream connection attempt
+- Stable routing across the lifetime of one logical proxy connection
+- Routing observability through explicit selection logs
+
+### Backend Pool
+
+- backend-a: 127.0.0.1:9001
+- backend-b: 127.0.0.1:9002
+- Selection order: A, B, A, B, ...
+
+### Tests
+
+- Backend pool unit rotation: PASS in review build
+- Six sequential proxy requests alternate A/B: PASS in review build
+- Backend identity preserved in response: PASS in review build
+- Existing forwarding regression: PASS in review build
+- Existing timeout regression: PASS in review build
+- Existing backpressure regression: PASS in review build
+- Phase 17 ASan/UBSan suite: PENDING USER GATE
+- Full local `make test` / `make sanitize`: PENDING USER GATE
+
+### Scope Note
+
+Round robin currently selects a backend when a logical connection first needs
+an upstream socket. Backend health, admission limits, retry policy, and
+latency-aware routing remain later phases. A failed selected backend is not
+retried in Phase 17.
+
+### Next Phase
+
+Phase 18 — Backend connection limits and admission control.

@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include "backend_pool.h"
 #include "connection.h"
 #include "http_framing.h"
 #include "net_utils.h"
@@ -20,8 +21,6 @@
 #define BACKLOG 128
 #define MAX_EVENTS 64
 #define READ_CHUNK 1024
-#define BACKEND_IP "127.0.0.1"
-#define BACKEND_PORT 9001
 
 #define DEFAULT_CONNECT_TIMEOUT_MS 3000ULL
 #define DEFAULT_IDLE_TIMEOUT_MS 30000ULL
@@ -47,6 +46,16 @@ static size_t active_connections = 0;
 static size_t peak_connections = 0;
 static size_t total_bytes_received = 0;
 static size_t total_timeouts = 0;
+
+static const backend_target_t backend_targets[] = {
+    {"backend-a", "127.0.0.1", 9001},
+    {"backend-b", "127.0.0.1", 9002}
+};
+
+#define BACKEND_COUNT \
+    (sizeof(backend_targets) / sizeof(backend_targets[0]))
+
+static backend_pool_t backend_pool;
 
 typedef struct {
     uint64_t connect_ms;
@@ -812,20 +821,54 @@ static int ensure_backend_connection(
         return 0;
     }
 
+    size_t backend_index = 0;
+
+    const backend_target_t *target =
+        backend_pool_next(
+            &backend_pool,
+            &backend_index
+        );
+
+    if (target == NULL) {
+        fprintf(
+            stderr,
+            "Connection %llu could not select a backend\n",
+            (unsigned long long)connection->id
+        );
+
+        connection->backend_state =
+            BACKEND_FAILED;
+        return -1;
+    }
+
+    connection->backend_index = backend_index;
+    connection->backend_selected = 1;
+
+    printf(
+        "Connection %llu selected backend %s "
+        "%s:%u (index=%zu)\n",
+        (unsigned long long)connection->id,
+        target->name,
+        target->ip,
+        (unsigned int)target->port,
+        backend_index
+    );
+
     int backend_fd = -1;
 
     nonblock_connect_result_t result =
         start_nonblocking_connect_ipv4(
-            BACKEND_IP,
-            BACKEND_PORT,
+            target->ip,
+            target->port,
             &backend_fd
         );
 
     if (result == NONBLOCK_CONNECT_ERROR) {
         printf(
-            "Connection %llu backend connect "
+            "Connection %llu backend %s connect "
             "start failed: %s\n",
             (unsigned long long)connection->id,
+            target->name,
             strerror(errno)
         );
 
@@ -870,9 +913,10 @@ static int ensure_backend_connection(
         }
 
         printf(
-            "Connection %llu backend connected "
+            "Connection %llu backend %s connected "
             "immediately on FD %d\n",
             (unsigned long long)connection->id,
+            target->name,
             backend_fd
         );
 
@@ -902,9 +946,10 @@ static int ensure_backend_connection(
     }
 
     printf(
-        "Connection %llu backend connect "
+        "Connection %llu backend %s connect "
         "in progress on FD %d\n",
         (unsigned long long)connection->id,
+        target->name,
         backend_fd
     );
 
@@ -1432,6 +1477,15 @@ static void handle_backend_event(
         return;
     }
 
+    const backend_target_t *target = NULL;
+
+    if (connection->backend_selected) {
+        target = backend_pool_get(
+            &backend_pool,
+            connection->backend_index
+        );
+    }
+
     if (connection->backend_state
         == BACKEND_CONNECTING) {
 
@@ -1446,9 +1500,10 @@ static void handle_backend_event(
                 connection->backend_fd) == -1) {
 
             printf(
-                "Connection %llu backend connect "
+                "Connection %llu backend %s connect "
                 "failed: %s\n",
                 (unsigned long long)connection->id,
+                target != NULL ? target->name : "?",
                 strerror(errno)
             );
 
@@ -1464,9 +1519,10 @@ static void handle_backend_event(
         note_activity(connection);
 
         printf(
-            "Connection %llu backend connected "
+            "Connection %llu backend %s connected "
             "on FD %d\n",
             (unsigned long long)connection->id,
+            target != NULL ? target->name : "?",
             connection->backend_fd
         );
 
@@ -1953,6 +2009,15 @@ int main(void)
         return EXIT_FAILURE;
     }
 
+    if (backend_pool_init(
+            &backend_pool,
+            backend_targets,
+            BACKEND_COUNT) == -1) {
+
+        fprintf(stderr, "backend_pool_init failed\n");
+        return EXIT_FAILURE;
+    }
+
     if (install_signal_handlers() == -1) {
         perror("sigaction");
         return EXIT_FAILURE;
@@ -2004,6 +2069,20 @@ int main(void)
         (unsigned long long)timeout_config.request_ms,
         (unsigned long long)timeout_config.response_ms
     );
+
+    printf("Backends: ");
+
+    for (size_t i = 0; i < BACKEND_COUNT; ++i) {
+        printf(
+            "%s%s=%s:%u",
+            i == 0 ? "" : ", ",
+            backend_targets[i].name,
+            backend_targets[i].ip,
+            (unsigned int)backend_targets[i].port
+        );
+    }
+
+    printf("\n");
 
     struct epoll_event events[MAX_EVENTS];
 

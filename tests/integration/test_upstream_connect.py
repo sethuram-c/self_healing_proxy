@@ -175,7 +175,7 @@ class UpstreamConnectTests(
             )
 
             self.assertIn(
-                "backend connected",
+                "backend-a connected",
                 stdout,
             )
 

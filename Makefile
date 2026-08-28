@@ -14,6 +14,7 @@ EPOLL_SERVER := build/epoll_server
 SANITIZED_EPOLL := build/epoll_server-sanitized
 SANITIZED_TCP := build/tcp_listener-sanitized
 CONNECTION_TEST := build/test_connection
+BACKEND_POOL_TEST := build/test_backend_pool
 HTTP_FRAMING_TEST := build/test_http_framing
 MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 
@@ -34,6 +35,7 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	sanitize-main \
 	sanitize-buffer \
 	sanitize-nonblocking \
+	sanitize-backend-pool \
 	sanitize-http \
 	sanitize-tcp \
 	sanitize-epoll
@@ -88,7 +90,9 @@ $(EPOLL_SERVER): \
 	src/net_utils.c \
 	src/io_buffer.c \
 	src/http_framing.c \
+	src/backend_pool.c \
 	include/connection.h \
+	include/backend_pool.h \
 	include/net_utils.h \
 	include/io_buffer.h \
 	include/http_framing.h
@@ -99,7 +103,18 @@ $(EPOLL_SERVER): \
 		src/net_utils.c \
 		src/io_buffer.c \
 		src/http_framing.c \
+		src/backend_pool.c \
 		-o $(EPOLL_SERVER)
+
+$(BACKEND_POOL_TEST): \
+	tests/unit/test_backend_pool.c \
+	src/backend_pool.c \
+	include/backend_pool.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		tests/unit/test_backend_pool.c \
+		src/backend_pool.c \
+		-o $(BACKEND_POOL_TEST)
 
 $(CONNECTION_TEST): \
 	tests/unit/test_connection.c \
@@ -152,12 +167,14 @@ test-unit: \
 	$(IO_BUFFER_TEST) \
 	$(NONBLOCKING_TEST) \
 	$(CONNECTION_TEST) \
+	$(BACKEND_POOL_TEST) \
 	$(HTTP_FRAMING_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	./$(IO_BUFFER_TEST)
 	./$(NONBLOCKING_TEST)
 	./$(CONNECTION_TEST)
+	./$(BACKEND_POOL_TEST)
 	./$(HTTP_FRAMING_TEST)
 
 test-integration: \
@@ -172,6 +189,7 @@ test-integration: \
 	python3 tests/integration/test_bidirectional_proxy.py
 	python3 tests/integration/test_backpressure.py
 	python3 tests/integration/test_timeouts.py
+	python3 tests/integration/test_round_robin.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -204,6 +222,14 @@ sanitize-nonblocking:
 		-o build/test_nonblocking-sanitized
 	./build/test_nonblocking-sanitized
 
+sanitize-backend-pool:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		tests/unit/test_backend_pool.c \
+		src/backend_pool.c \
+		-o build/test_backend_pool-sanitized
+	./build/test_backend_pool-sanitized
+
 sanitize-http:
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
@@ -229,6 +255,7 @@ sanitize-epoll:
 		src/http_framing.c \
 		src/net_utils.c \
 		src/io_buffer.c \
+		src/backend_pool.c \
 		-o $(SANITIZED_EPOLL)
 	EPOLL_SERVER_BIN=$(SANITIZED_EPOLL) \
 		python3 tests/integration/test_epoll_server.py
@@ -245,12 +272,15 @@ sanitize-epoll:
 	EPOLL_SERVER_BIN=$(SANITIZED_EPOLL) \
 		python3 tests/integration/test_timeouts.py
 	EPOLL_SERVER_BIN=$(SANITIZED_EPOLL) \
+		python3 tests/integration/test_round_robin.py
+	EPOLL_SERVER_BIN=$(SANITIZED_EPOLL) \
 		python3 tests/stress/test_100_clients.py
 
 sanitize: \
 	sanitize-main \
 	sanitize-buffer \
 	sanitize-nonblocking \
+	sanitize-backend-pool \
 	sanitize-http \
 	sanitize-tcp \
 	sanitize-epoll

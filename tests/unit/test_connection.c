@@ -13,6 +13,8 @@ int main(void)
     assert(connection->fd == 42);
     assert(connection->id == 1001);
     assert(connection->backend_fd == -1);
+    assert(connection->backend_index == 0);
+    assert(connection->backend_selected == 0);
 
     assert(
         io_buffer_size(
