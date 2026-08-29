@@ -15,6 +15,7 @@ int main(void)
     assert(connection->backend_fd == -1);
     assert(connection->backend_index == 0);
     assert(connection->backend_selected == 0);
+    assert(connection->backend_slot_acquired == 0);
 
     assert(
         io_buffer_size(

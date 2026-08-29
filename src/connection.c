@@ -19,6 +19,7 @@ connection_t *connection_create(
     connection->backend_fd = -1;
     connection->backend_index = 0;
     connection->backend_selected = 0;
+    connection->backend_slot_acquired = 0;
 
     io_buffer_init(&connection->client_to_backend);
     io_buffer_init(&connection->backend_to_client);

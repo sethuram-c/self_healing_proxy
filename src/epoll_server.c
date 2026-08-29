@@ -27,6 +27,8 @@
 #define DEFAULT_REQUEST_TIMEOUT_MS 10000ULL
 #define DEFAULT_RESPONSE_TIMEOUT_MS 10000ULL
 #define MAX_TIMEOUT_MS 3600000ULL
+#define DEFAULT_BACKEND_MAX_CONNECTIONS 64U
+#define MAX_BACKEND_CONNECTIONS 100000U
 
 #define BUFFER_HIGH_WATERMARK \
     ((IO_BUFFER_CAPACITY * 3U) / 4U)
@@ -46,10 +48,14 @@ static size_t active_connections = 0;
 static size_t peak_connections = 0;
 static size_t total_bytes_received = 0;
 static size_t total_timeouts = 0;
+static size_t total_admission_rejections = 0;
 
-static const backend_target_t backend_targets[] = {
-    {"backend-a", "127.0.0.1", 9001},
-    {"backend-b", "127.0.0.1", 9002}
+static size_t backend_max_connections =
+    DEFAULT_BACKEND_MAX_CONNECTIONS;
+
+static backend_target_t backend_targets[] = {
+    {"backend-a", "127.0.0.1", 9001, 0, 1},
+    {"backend-b", "127.0.0.1", 9002, 0, 1}
 };
 
 #define BACKEND_COUNT \
@@ -133,6 +139,45 @@ static int parse_timeout_env(
     }
 
     *value = (uint64_t)parsed;
+    return 0;
+}
+
+static int parse_backend_capacity_env(void)
+{
+    const char *text = getenv(
+        "MICROPROXY_BACKEND_MAX_CONNECTIONS"
+    );
+
+    if (text == NULL || *text == '\0') {
+        return 0;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    unsigned long long parsed = strtoull(
+        text,
+        &end,
+        10
+    );
+
+    if (errno != 0
+        || end == text
+        || *end != '\0'
+        || parsed == 0
+        || parsed > MAX_BACKEND_CONNECTIONS) {
+
+        fprintf(
+            stderr,
+            "Invalid MICROPROXY_BACKEND_MAX_CONNECTIONS=%s; "
+            "expected 1..%u\n",
+            text,
+            MAX_BACKEND_CONNECTIONS
+        );
+
+        return -1;
+    }
+
+    backend_max_connections = (size_t)parsed;
     return 0;
 }
 
@@ -352,6 +397,30 @@ static void connection_list_remove(
     connection->next = NULL;
 }
 
+static void release_backend_slot(
+    connection_t *connection
+)
+{
+    if (!connection->backend_slot_acquired) {
+        return;
+    }
+
+    if (backend_pool_release(
+            &backend_pool,
+            connection->backend_index) == -1) {
+
+        fprintf(
+            stderr,
+            "Connection %llu backend slot release failed "
+            "for index %zu\n",
+            (unsigned long long)connection->id,
+            connection->backend_index
+        );
+    }
+
+    connection->backend_slot_acquired = 0;
+}
+
 static void close_backend(
     int epoll_fd,
     connection_t *connection
@@ -379,6 +448,7 @@ static void close_backend(
     }
 
     connection->backend_fd = -1;
+    release_backend_slot(connection);
 }
 
 static void connection_destroy(
@@ -423,6 +493,7 @@ static void connection_destroy(
     }
 
     close_backend(epoll_fd, connection);
+    release_backend_slot(connection);
     connection_list_remove(connection);
 
     if (close(fd) == -1) {
@@ -824,34 +895,39 @@ static int ensure_backend_connection(
     size_t backend_index = 0;
 
     const backend_target_t *target =
-        backend_pool_next(
+        backend_pool_acquire_next(
             &backend_pool,
             &backend_index
         );
 
     if (target == NULL) {
-        fprintf(
-            stderr,
-            "Connection %llu could not select a backend\n",
+        total_admission_rejections++;
+
+        printf(
+            "Connection %llu admission rejected: "
+            "all backends at capacity\n",
             (unsigned long long)connection->id
         );
 
         connection->backend_state =
-            BACKEND_FAILED;
+            BACKEND_REJECTED;
         return -1;
     }
 
     connection->backend_index = backend_index;
     connection->backend_selected = 1;
+    connection->backend_slot_acquired = 1;
 
     printf(
         "Connection %llu selected backend %s "
-        "%s:%u (index=%zu)\n",
+        "%s:%u (index=%zu active=%zu/%zu)\n",
         (unsigned long long)connection->id,
         target->name,
         target->ip,
         (unsigned int)target->port,
-        backend_index
+        backend_index,
+        target->active_connections,
+        target->max_connections
     );
 
     int backend_fd = -1;
@@ -2009,6 +2085,15 @@ int main(void)
         return EXIT_FAILURE;
     }
 
+    if (parse_backend_capacity_env() == -1) {
+        return EXIT_FAILURE;
+    }
+
+    for (size_t i = 0; i < BACKEND_COUNT; ++i) {
+        backend_targets[i].max_connections =
+            backend_max_connections;
+    }
+
     if (backend_pool_init(
             &backend_pool,
             backend_targets,
@@ -2074,11 +2159,12 @@ int main(void)
 
     for (size_t i = 0; i < BACKEND_COUNT; ++i) {
         printf(
-            "%s%s=%s:%u",
+            "%s%s=%s:%u(max=%zu)",
             i == 0 ? "" : ", ",
             backend_targets[i].name,
             backend_targets[i].ip,
-            (unsigned int)backend_targets[i].port
+            (unsigned int)backend_targets[i].port,
+            backend_targets[i].max_connections
         );
     }
 
@@ -2194,12 +2280,14 @@ int main(void)
         "peak_connections=%zu "
         "active_connections=%zu "
         "total_client_bytes=%zu "
-        "timeouts=%zu\n",
+        "timeouts=%zu "
+        "admission_rejections=%zu\n",
         total_connections,
         peak_connections,
         active_connections,
         total_bytes_received,
-        total_timeouts
+        total_timeouts,
+        total_admission_rejections
     );
 
     if (close(epoll_fd) == -1) {

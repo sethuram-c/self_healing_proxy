@@ -17,7 +17,8 @@ typedef enum {
     BACKEND_CONNECTING,
     BACKEND_CONNECTED,
     BACKEND_CLOSED,
-    BACKEND_FAILED
+    BACKEND_FAILED,
+    BACKEND_REJECTED
 } backend_state_t;
 
 typedef struct {
@@ -33,6 +34,7 @@ typedef struct connection {
 
     size_t backend_index;
     int backend_selected;
+    int backend_slot_acquired;
 
     io_buffer_t client_to_backend;
     io_buffer_t backend_to_client;

@@ -583,3 +583,50 @@ retried in Phase 17.
 ### Next Phase
 
 Phase 18 — Backend connection limits and admission control.
+
+
+## Phase 18 — Backend Connection Limits and Admission Control
+
+Status: IN PROGRESS
+
+### Concepts Learned
+
+- Per-backend connection capacity
+- Admission control before opening an upstream socket
+- Capacity reservation for connecting and connected upstreams
+- Skipping saturated backends during round-robin selection
+- Clean rejection when every backend is saturated
+- Centralized backend-slot release on EOF, connect failure, timeout, and teardown
+- Capacity observability through active/max counters
+- Admission-rejection accounting
+
+### Capacity Model
+
+- Default per-backend limit: 64 active upstream slots
+- Runtime override: `MICROPROXY_BACKEND_MAX_CONNECTIONS`
+- A slot is reserved when a backend is selected, before non-blocking `connect()` completes
+- A slot is released as soon as the upstream socket closes or the attempt is torn down
+- Round robin skips any backend whose active count has reached its configured maximum
+
+### Tests
+
+- Backend pool capacity unit tests: PASS in review build
+- Saturated backends reject a third request: PASS in review build
+- Capacity releases after slow requests complete: PASS in review build
+- New request succeeds after capacity recovery: PASS in review build
+- Round-robin regression: PASS in review build
+- Timeout/backpressure/forwarding regressions: PASS in review build
+- 100-client stress regression: PASS in review build
+- Phase 18 admission control under ASan/UBSan: PASS in review build
+- Full local `make test` / `make sanitize`: PENDING USER GATE
+
+### Scope Note
+
+Phase 18 limits concurrent upstream connection slots, but it does not queue
+requests when all backends are full. A saturated pool rejects the logical
+connection cleanly. Retry safety and more advanced failure policy remain later
+phases.
+
+### Next Phase
+
+Phase 19 — Failure handling and retry safety.
