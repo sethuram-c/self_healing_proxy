@@ -17,6 +17,7 @@ The project currently includes:
 - Monotonic idle/request/connect/response-start timeouts
 - Two-backend round-robin routing
 - Per-backend connection limits and admission control
+- Conservative pre-send backend failover with replay suppression after upstream bytes are sent
 - Deterministic Python HTTP test backends
 - Unit, integration, stress, and ASan/UBSan test targets
 

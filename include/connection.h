@@ -35,6 +35,7 @@ typedef struct connection {
     size_t backend_index;
     int backend_selected;
     int backend_slot_acquired;
+    size_t backend_retry_count;
 
     io_buffer_t client_to_backend;
     io_buffer_t backend_to_client;

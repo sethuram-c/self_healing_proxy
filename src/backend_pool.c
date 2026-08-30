@@ -32,8 +32,9 @@ int backend_pool_init(
     return 0;
 }
 
-const backend_target_t *backend_pool_acquire_next(
+const backend_target_t *backend_pool_acquire_next_excluding(
     backend_pool_t *pool,
+    size_t excluded_index,
     size_t *selected_index
 )
 {
@@ -47,6 +48,10 @@ const backend_target_t *backend_pool_acquire_next(
     for (size_t offset = 0; offset < pool->count; ++offset) {
         size_t index =
             (pool->next_index + offset) % pool->count;
+
+        if (index == excluded_index) {
+            continue;
+        }
 
         backend_target_t *target =
             &pool->targets[index];
@@ -69,6 +74,18 @@ const backend_target_t *backend_pool_acquire_next(
     }
 
     return NULL;
+}
+
+const backend_target_t *backend_pool_acquire_next(
+    backend_pool_t *pool,
+    size_t *selected_index
+)
+{
+    return backend_pool_acquire_next_excluding(
+        pool,
+        SIZE_MAX,
+        selected_index
+    );
 }
 
 int backend_pool_release(

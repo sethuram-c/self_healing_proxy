@@ -29,6 +29,12 @@ const backend_target_t *backend_pool_acquire_next(
     size_t *selected_index
 );
 
+const backend_target_t *backend_pool_acquire_next_excluding(
+    backend_pool_t *pool,
+    size_t excluded_index,
+    size_t *selected_index
+);
+
 int backend_pool_release(
     backend_pool_t *pool,
     size_t index

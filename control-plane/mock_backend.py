@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import socket
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -115,11 +116,6 @@ class MockBackendHandler(BaseHTTPRequestHandler):
             ),
         )
 
-        if delay_ms > 0:
-            time.sleep(
-                delay_ms / 1000.0
-            )
-
         body_bytes = 0
 
         if "body_bytes" in query:
@@ -141,6 +137,31 @@ class MockBackendHandler(BaseHTTPRequestHandler):
         backend_name = (
             self.server.backend_name
         )
+
+        if parsed.path == "/drop":
+            print(
+                f"{backend_name}: "
+                f"GET {parsed.path} "
+                f"drop_after_ms={delay_ms}",
+                flush=True,
+            )
+
+            if delay_ms > 0:
+                time.sleep(delay_ms / 1000.0)
+
+            try:
+                self.connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+            self.connection.close()
+            self.close_connection = True
+            return
+
+        if delay_ms > 0:
+            time.sleep(
+                delay_ms / 1000.0
+            )
 
         if parsed.path == "/bytes":
             print(

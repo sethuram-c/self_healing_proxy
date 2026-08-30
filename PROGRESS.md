@@ -630,3 +630,50 @@ phases.
 ### Next Phase
 
 Phase 19 — Failure handling and retry safety.
+
+
+## Phase 19 — Failure Handling and Retry Safety
+
+Status: IN PROGRESS
+
+### Concepts Learned
+
+- Backend failover after pre-send connection failure
+- Retry eligibility based on upstream transmission state
+- Excluding the failed backend from a retry selection
+- Preserving backend admission accounting across retries
+- Retry suppression after any request byte reaches an upstream
+- Avoiding duplicate side effects through conservative replay policy
+- Retry and suppression observability
+
+### Retry Policy
+
+- Maximum automatic failover retries per logical connection: 1
+- A retry is allowed only while `bytes_forwarded_to_backend == 0` and no backend response bytes have arrived
+- The failed backend is excluded from the retry selection
+- The failed backend slot is released before the alternate backend is acquired
+- Once any request byte has been written upstream, automatic replay is forbidden
+- Backend EOF after request transmission is therefore surfaced to the client rather than replayed elsewhere
+
+### Tests
+
+- Failed backend-a connect safely fails over to backend-b: PASS in review build
+- Alternate backend produces the real response after safe failover: PASS in review build
+- `/drop` closes after receiving a request and is not replayed to backend-b: PASS in review build
+- Retry suppression is logged after upstream request bytes were sent: PASS in review build
+- Backend-pool exclusion selection: PASS in review build
+- Round-robin regression: PASS in review build
+- Admission-control regression: PASS in review build
+- Timeout/backpressure/forwarding regressions: PASS in review build
+- Full local `make test` / `make sanitize`: PENDING USER GATE
+
+### Scope Note
+
+Phase 19 deliberately implements only provably safe pre-send failover. It does not
+replay requests after any request bytes have reached a backend, even for GET.
+Supporting post-send retries would require retaining a replayable request copy and
+defining method/idempotency policy carefully.
+
+### Next Phase
+
+Phase 20 — Stage 2 performance baseline and reverse-proxy benchmark.

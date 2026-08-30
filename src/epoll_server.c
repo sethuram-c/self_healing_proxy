@@ -29,6 +29,7 @@
 #define MAX_TIMEOUT_MS 3600000ULL
 #define DEFAULT_BACKEND_MAX_CONNECTIONS 64U
 #define MAX_BACKEND_CONNECTIONS 100000U
+#define DEFAULT_MAX_BACKEND_RETRIES 1U
 
 #define BUFFER_HIGH_WATERMARK \
     ((IO_BUFFER_CAPACITY * 3U) / 4U)
@@ -49,6 +50,11 @@ static size_t peak_connections = 0;
 static size_t total_bytes_received = 0;
 static size_t total_timeouts = 0;
 static size_t total_admission_rejections = 0;
+static size_t total_backend_retries = 0;
+static size_t total_retry_suppressions = 0;
+
+static size_t max_backend_retries =
+    DEFAULT_MAX_BACKEND_RETRIES;
 
 static size_t backend_max_connections =
     DEFAULT_BACKEND_MAX_CONNECTIONS;
@@ -791,6 +797,12 @@ static int flush_backend_to_client(
 }
 
 
+static int retry_backend_before_send(
+    int epoll_fd,
+    connection_t *connection,
+    const char *reason
+);
+
 static int flush_client_to_backend(
     int epoll_fd,
     connection_t *connection
@@ -849,6 +861,16 @@ static int flush_client_to_backend(
         }
 
         perror("send backend");
+
+        if (connection->bytes_forwarded_to_backend == 0
+            && retry_backend_before_send(
+                   epoll_fd,
+                   connection,
+                   "backend send failure") == 0) {
+
+            return 0;
+        }
+
         connection->backend_state =
             BACKEND_FAILED;
         connection_destroy(epoll_fd, connection);
@@ -881,36 +903,45 @@ static int flush_client_to_backend(
 }
 
 
-static int ensure_backend_connection(
+static int start_backend_connection(
     int epoll_fd,
-    connection_t *connection
+    connection_t *connection,
+    size_t excluded_index,
+    int initial_admission
 )
 {
-    if (connection->backend_state
-        != BACKEND_NOT_STARTED) {
-
-        return 0;
-    }
-
     size_t backend_index = 0;
 
     const backend_target_t *target =
-        backend_pool_acquire_next(
+        backend_pool_acquire_next_excluding(
             &backend_pool,
+            excluded_index,
             &backend_index
         );
 
     if (target == NULL) {
-        total_admission_rejections++;
+        if (initial_admission) {
+            total_admission_rejections++;
 
-        printf(
-            "Connection %llu admission rejected: "
-            "all backends at capacity\n",
-            (unsigned long long)connection->id
-        );
+            printf(
+                "Connection %llu admission rejected: "
+                "all backends at capacity\n",
+                (unsigned long long)connection->id
+            );
 
-        connection->backend_state =
-            BACKEND_REJECTED;
+            connection->backend_state =
+                BACKEND_REJECTED;
+        } else {
+            printf(
+                "Connection %llu backend retry unavailable: "
+                "no alternate backend has capacity\n",
+                (unsigned long long)connection->id
+            );
+
+            connection->backend_state =
+                BACKEND_FAILED;
+        }
+
         return -1;
     }
 
@@ -950,15 +981,14 @@ static int ensure_backend_connection(
 
         connection->backend_state =
             BACKEND_FAILED;
-
-        return -1;
+        release_backend_slot(connection);
+        connection->backend_selected = 0;
+        return 1;
     }
 
     connection->backend_fd = backend_fd;
 
-    if (result
-        == NONBLOCK_CONNECT_CONNECTED) {
-
+    if (result == NONBLOCK_CONNECT_CONNECTED) {
         connection->backend_state =
             BACKEND_CONNECTED;
         connection->backend_connect_started_at_ms = 0;
@@ -1030,6 +1060,124 @@ static int ensure_backend_connection(
     );
 
     return 0;
+}
+
+static int retry_backend_before_send(
+    int epoll_fd,
+    connection_t *connection,
+    const char *reason
+)
+{
+    if (connection->bytes_forwarded_to_backend != 0
+        || connection->backend_bytes_received != 0) {
+
+        total_retry_suppressions++;
+
+        printf(
+            "Connection %llu backend retry suppressed after "
+            "%zu request bytes were forwarded (%s)\n",
+            (unsigned long long)connection->id,
+            connection->bytes_forwarded_to_backend,
+            reason
+        );
+
+        return -1;
+    }
+
+    if (connection->backend_retry_count
+        >= max_backend_retries) {
+
+        printf(
+            "Connection %llu backend retry limit reached "
+            "after %zu retries (%s)\n",
+            (unsigned long long)connection->id,
+            connection->backend_retry_count,
+            reason
+        );
+
+        return -1;
+    }
+
+    size_t failed_index = SIZE_MAX;
+    const char *failed_name = "unknown";
+
+    if (connection->backend_selected) {
+        failed_index = connection->backend_index;
+
+        const backend_target_t *failed =
+            backend_pool_get(
+                &backend_pool,
+                failed_index
+            );
+
+        if (failed != NULL) {
+            failed_name = failed->name;
+        }
+    }
+
+    close_backend(epoll_fd, connection);
+    release_backend_slot(connection);
+
+    connection->backend_selected = 0;
+    connection->backend_state =
+        BACKEND_NOT_STARTED;
+    connection->backend_connect_started_at_ms = 0;
+    connection->response_wait_started_at_ms = 0;
+
+    connection->backend_retry_count++;
+    total_backend_retries++;
+
+    printf(
+        "Connection %llu retrying backend after %s: "
+        "failed=%s attempt=%zu/%zu\n",
+        (unsigned long long)connection->id,
+        reason,
+        failed_name,
+        connection->backend_retry_count,
+        max_backend_retries
+    );
+
+    int result = start_backend_connection(
+        epoll_fd,
+        connection,
+        failed_index,
+        0
+    );
+
+    if (result == 1) {
+        return -1;
+    }
+
+    return result;
+}
+
+static int ensure_backend_connection(
+    int epoll_fd,
+    connection_t *connection
+)
+{
+    if (connection->backend_state
+        != BACKEND_NOT_STARTED) {
+
+        return 0;
+    }
+
+    int result = start_backend_connection(
+        epoll_fd,
+        connection,
+        SIZE_MAX,
+        1
+    );
+
+    if (result == 1) {
+        return retry_backend_before_send(
+            epoll_fd,
+            connection,
+            "connect start failure"
+        );
+    }
+
+    return result;
 }
 
 static int process_http_frames(
@@ -1494,6 +1642,19 @@ static int handle_backend_read(
                 (unsigned long long)connection->id
             );
 
+            if (connection->backend_bytes_received == 0
+                && connection->bytes_forwarded_to_backend > 0) {
+
+                total_retry_suppressions++;
+                printf(
+                    "Connection %llu backend retry suppressed after "
+                    "%zu request bytes were forwarded "
+                    "(backend EOF before response)\n",
+                    (unsigned long long)connection->id,
+                    connection->bytes_forwarded_to_backend
+                );
+            }
+
             close_backend(epoll_fd, connection);
 
             if (io_buffer_size(
@@ -1585,6 +1746,15 @@ static void handle_backend_event(
 
             connection->backend_state =
                 BACKEND_FAILED;
+
+            if (retry_backend_before_send(
+                    epoll_fd,
+                    connection,
+                    "backend connect failure") == 0) {
+
+                return;
+            }
+
             connection_destroy(epoll_fd, connection);
             return;
         }
@@ -1899,16 +2069,27 @@ static void check_connection_timeouts(
                    connection->backend_connect_started_at_ms)
                >= timeout_config.connect_ms) {
 
-            connection->backend_state = BACKEND_FAILED;
-            timeout_connection(
-                epoll_fd,
-                connection,
-                "backend connect",
-                elapsed_ms(
-                    now_ms,
-                    connection->backend_connect_started_at_ms
-                )
+            uint64_t connect_elapsed = elapsed_ms(
+                now_ms,
+                connection->backend_connect_started_at_ms
             );
+
+            printf(
+                "Connection %llu backend connect timeout "
+                "after %llu ms\n",
+                (unsigned long long)connection->id,
+                (unsigned long long)connect_elapsed
+            );
+            total_timeouts++;
+            connection->backend_state = BACKEND_FAILED;
+
+            if (retry_backend_before_send(
+                    epoll_fd,
+                    connection,
+                    "backend connect timeout") == -1) {
+
+                connection_destroy(epoll_fd, connection);
+            }
 
             connection = next;
             continue;
@@ -2281,13 +2462,17 @@ int main(void)
         "active_connections=%zu "
         "total_client_bytes=%zu "
         "timeouts=%zu "
-        "admission_rejections=%zu\n",
+        "admission_rejections=%zu "
+        "backend_retries=%zu "
+        "retry_suppressions=%zu\n",
         total_connections,
         peak_connections,
         active_connections,
         total_bytes_received,
         total_timeouts,
-        total_admission_rejections
+        total_admission_rejections,
+        total_backend_retries,
+        total_retry_suppressions
     );
 
     if (close(epoll_fd) == -1) {

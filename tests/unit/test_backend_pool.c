@@ -85,6 +85,24 @@ int main(void)
     assert(backend_pool_get(&pool, 1) == &targets[1]);
     assert(backend_pool_get(&pool, 2) == NULL);
 
+
+    assert(backend_pool_init(
+        &pool,
+        targets,
+        2
+    ) == 0);
+
+    target = backend_pool_acquire_next_excluding(
+        &pool,
+        0,
+        &index
+    );
+
+    assert(target != NULL);
+    assert(strcmp(target->name, "backend-b") == 0);
+    assert(index == 1);
+    assert(backend_pool_release(&pool, 1) == 0);
+
     assert(backend_pool_init(NULL, targets, 2) == -1);
     assert(backend_pool_init(&pool, NULL, 2) == -1);
     assert(backend_pool_init(&pool, targets, 0) == -1);
