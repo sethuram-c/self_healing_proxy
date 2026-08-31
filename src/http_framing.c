@@ -408,7 +408,8 @@ http_request_frame_inspect(
 
             /*
              * Chunked framing is deliberately
-             * unsupported in Phase 12.
+             * unsupported by the current bounded
+             * request-framing implementation.
              */
             return HTTP_FRAME_ERROR;
         }

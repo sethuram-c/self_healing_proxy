@@ -329,6 +329,41 @@ connections through a single epoll event loop while maintaining explicit
 per-connection state and clean resource ownership.
 
 
+## Phase 11 — Deterministic Python HTTP Backends
+
+Status: COMPLETE
+
+### Concepts Learned
+
+- Deterministic mock upstream services
+- Python `ThreadingHTTPServer`
+- Backend identity in responses
+- Controlled status-code injection
+- Controlled response-delay injection
+- Stable local upstreams for repeatable proxy integration tests
+- Independent backend ports for later routing tests
+
+### Backend Layout
+
+- backend-a: `127.0.0.1:9001`
+- backend-b: `127.0.0.1:9002`
+- Responses include backend name, method, path, status, and delay
+- Test hooks support custom `status` and `delay_ms`
+
+### Tests
+
+- backend-a identity: PASS
+- backend-b identity: PASS
+- custom HTTP status: PASS
+- controlled delay: PASS
+- backend startup/readiness: PASS
+- backend cleanup: PASS
+
+### Next Phase
+
+Phase 12 — HTTP/1.1 request framing and exact request boundaries.
+
+
 ## Phase 12 — HTTP/1.1 Request Framing
 
 Status: COMPLETE
@@ -449,7 +484,7 @@ and resuming them when output drains.
 
 ## Phase 15 — Partial Writes and Backpressure
 
-Status: IN PROGRESS
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -478,8 +513,8 @@ Status: IN PROGRESS
 - Backend EPOLLIN resume: PASS
 - Full response integrity after pause/resume: PASS
 - Existing bidirectional forwarding: PASS
-- Regression tests: PENDING
-- ASan/UBSan: PENDING
+- Stage 2 closure regression suite: PASS in audit snapshot
+- Stage 2 closure ASan/UBSan proxy suite: PASS in audit snapshot
 
 ### Current Limitation
 
@@ -490,7 +525,7 @@ dynamically. This is intentional for the current learning stage.
 
 ## Phase 16 — Connection and Upstream Timeouts
 
-Status: IN PROGRESS
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -529,7 +564,7 @@ The defaults can be overridden with:
 - Backpressure regression: PASS in review build
 - 100-client stress regression: PASS in review build
 - Phase 16 ASan/UBSan epoll suite: PASS in review build
-- Full local `make test` / `make sanitize`: PENDING USER GATE
+- Stage 2 closure audit: PASS for proxy/integration/stress paths; final local full-suite gate required before Phase 20 commit
 
 ### Scope Note
 
@@ -544,7 +579,7 @@ Phase 17 — Round-robin backend selection.
 
 ## Phase 17 — Round-Robin Backend Selection
 
-Status: IN PROGRESS
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -570,8 +605,8 @@ Status: IN PROGRESS
 - Existing forwarding regression: PASS in review build
 - Existing timeout regression: PASS in review build
 - Existing backpressure regression: PASS in review build
-- Phase 17 ASan/UBSan suite: PENDING USER GATE
-- Full local `make test` / `make sanitize`: PENDING USER GATE
+- Phase 17 ASan/UBSan paths: PASS in Stage 2 closure audit
+- Stage 2 closure audit: PASS for proxy/integration/stress paths; final local full-suite gate required before Phase 20 commit
 
 ### Scope Note
 
@@ -587,7 +622,7 @@ Phase 18 — Backend connection limits and admission control.
 
 ## Phase 18 — Backend Connection Limits and Admission Control
 
-Status: IN PROGRESS
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -618,7 +653,7 @@ Status: IN PROGRESS
 - Timeout/backpressure/forwarding regressions: PASS in review build
 - 100-client stress regression: PASS in review build
 - Phase 18 admission control under ASan/UBSan: PASS in review build
-- Full local `make test` / `make sanitize`: PENDING USER GATE
+- Stage 2 closure audit: PASS for proxy/integration/stress paths; final local full-suite gate required before Phase 20 commit
 
 ### Scope Note
 
@@ -634,7 +669,7 @@ Phase 19 — Failure handling and retry safety.
 
 ## Phase 19 — Failure Handling and Retry Safety
 
-Status: IN PROGRESS
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -665,7 +700,7 @@ Status: IN PROGRESS
 - Round-robin regression: PASS in review build
 - Admission-control regression: PASS in review build
 - Timeout/backpressure/forwarding regressions: PASS in review build
-- Full local `make test` / `make sanitize`: PENDING USER GATE
+- Stage 2 closure audit: PASS for proxy/integration/stress paths; final local full-suite gate required before Phase 20 commit
 
 ### Scope Note
 
@@ -677,3 +712,96 @@ defining method/idempotency policy carefully.
 ### Next Phase
 
 Phase 20 — Stage 2 performance baseline and reverse-proxy benchmark.
+
+
+## Phase 20 — Stage 2 Performance Baseline
+
+Status: IN PROGRESS
+
+### Concepts Learned
+
+- Benchmark methodology before optimization
+- Direct-backend versus proxy comparison
+- Warm-up versus measured requests
+- Fixed request count and concurrency
+- Throughput measurement in requests/second
+- Mean/min/max request latency as a basic Stage 2 baseline
+- Error-rate accounting
+- Round-robin distribution validation during load
+- Separating optimized benchmark builds from debug and sanitizer builds
+- Machine-readable benchmark artifacts
+
+### Benchmark Build
+
+- Benchmark binary: `build/epoll_server-bench`
+- Compiler profile: `-O2 -DNDEBUG` with the project's strict warning flags
+- Sanitizers are intentionally excluded from performance measurement
+- Proxy/backend terminal output is redirected by the harness to reduce terminal-rendering noise
+
+### Baseline Workload
+
+- Direct control targets: backend-a `:9001` and backend-b `:9002`, alternated evenly
+- Proxy target: `127.0.0.1:8081`
+- Proxy upstreams: backend-a `:9001`, backend-b `:9002`
+- Default warm-up: 100 requests per measured path
+- Default measured load: 1000 requests per path
+- Default concurrency: 32
+- Connection model: one TCP connection per HTTP request
+- Result: `benchmarks/phase20_baseline.json`
+
+### Tests / Gates
+
+- Benchmark harness argument validation: PASS in review build
+- Optimized benchmark proxy build: PENDING LOCAL GATE
+- Direct-backend benchmark completes without errors: PENDING LOCAL GATE
+- Proxy benchmark completes without errors: PENDING LOCAL GATE
+- Proxy traffic reaches both backend-a and backend-b: PENDING LOCAL GATE
+- JSON baseline artifact generated: PENDING LOCAL GATE
+- Full local `make test` / `make sanitize`: PENDING USER GATE
+
+### Scope Note
+
+Phase 20 establishes a repeatable Stage 2 reference point. It deliberately does
+not optimize the proxy and does not claim formal p50/p95/p99, CPU, memory, FD,
+or syscall profiling. Those are deeper performance-engineering tasks in later
+roadmap phases.
+
+### Next Phase
+
+Phase 21 — Process model and Linux isolation foundations.
+
+
+## Stage 2 Closure Gate
+
+Status: PENDING LOCAL FINAL GATE
+
+The Stage 2 closure audit corrected stale regression assertions from earlier phases,
+restored the missing Phase 11 progress entry, and re-ran the complete proxy
+integration/stress suite plus the ASan/UBSan proxy suite successfully in the audit
+snapshot.
+
+Before declaring Stage 2 closed and committing Phase 20, run locally:
+
+```bash
+make clean
+make test
+make sanitize
+make benchmark
+jq . benchmarks/phase20_baseline.json
+git diff --check
+git status --short
+```
+
+Required final conditions:
+
+- full normal unit/integration/stress suite passes;
+- full sanitizer suite passes;
+- benchmark optimized binary builds;
+- direct benchmark has zero failures;
+- proxy benchmark has zero failures;
+- proxy benchmark reaches both backend-a and backend-b;
+- `benchmarks/phase20_baseline.json` exists and parses;
+- no whitespace errors remain.
+
+After those conditions pass, set Phase 20 to `COMPLETE` and this Stage 2 closure
+status to `COMPLETE`.

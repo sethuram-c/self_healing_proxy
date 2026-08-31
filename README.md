@@ -69,3 +69,41 @@ make test
 ```bash
 make sanitize
 ```
+
+## Stage 2 performance baseline
+
+Build an optimized benchmark-only proxy binary and compare the direct mock
+backend path with the same workload through the proxy:
+
+```bash
+make benchmark
+```
+
+The result is written to:
+
+```text
+benchmarks/phase20_baseline.json
+```
+
+The baseline records request success/failure counts, elapsed time, throughput,
+mean/min/max latency, backend distribution, and direct-pool-vs-proxy overhead. It is
+intentionally measurement-only; later phases perform percentile analysis and
+deeper CPU/memory/syscall profiling.
+
+
+## Stage 2 closure gate
+
+Before moving into Phase 21, run the complete Stage 2 gate:
+
+```bash
+make stage2-gate
+jq . benchmarks/phase20_baseline.json
+git diff --check
+git status --short
+```
+
+`make stage2-gate` runs the normal unit/integration/stress suite, the sanitizer
+suite, and the optimized Phase 20 benchmark in sequence. Stage 2 should only be
+marked complete after all three finish successfully on the local development
+machine.
+

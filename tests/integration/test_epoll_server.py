@@ -117,30 +117,54 @@ class EpollServerIntegrationTests(
                 "",
             )
 
-            self.assertGreaterEqual(
-                stdout.count("Accepted "),
+            self.assertEqual(
+                stdout.count(
+                    "opened on FD"
+                ),
                 3,
             )
 
-            self.assertIn(
-                "read 10 bytes",
-                stdout,
+            self.assertGreaterEqual(
+                stdout.count(
+                    "closed after 10 client bytes"
+                ),
+                2,
             )
 
             self.assertIn(
-                "read 18 bytes",
+                "closed after 18 client bytes",
                 stdout,
             )
 
             self.assertGreaterEqual(
                 stdout.count(
-                    "reached EOF"
+                    "client reached EOF"
                 ),
                 3,
             )
 
             self.assertIn(
-                "epoll server shut down cleanly",
+                "total_connections=3",
+                stdout,
+            )
+
+            self.assertIn(
+                "peak_connections=3",
+                stdout,
+            )
+
+            self.assertIn(
+                "active_connections=0",
+                stdout,
+            )
+
+            self.assertIn(
+                "total_client_bytes=38",
+                stdout,
+            )
+
+            self.assertIn(
+                "shut down cleanly",
                 stdout,
             )
 

@@ -151,7 +151,7 @@ class HTTPFramingIntegrationTests(
             )
 
             self.assertIn(
-                "and 3 HTTP requests",
+                "3 HTTP requests",
                 stdout,
             )
 

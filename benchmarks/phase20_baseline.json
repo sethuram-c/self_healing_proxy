@@ -1,0 +1,63 @@
+{
+  "phase": 20,
+  "benchmark": "stage2_reverse_proxy_baseline",
+  "methodology": {
+    "path": "/phase20/benchmark",
+    "measured_requests_per_target": 1000,
+    "concurrency": 32,
+    "warmup_requests_per_target": 100,
+    "connection_model": "one TCP connection per HTTP request",
+    "proxy_binary": "build/epoll_server-bench",
+    "notes": [
+      "Direct control traffic alternates between backend-a :9001 and backend-b :9002.",
+      "Proxy traffic targets 127.0.0.1:8081 and should distribute across backend-a/backend-b.",
+      "Proxy/backend stdout and stderr are redirected to avoid terminal rendering overhead.",
+      "Phase 20 records a baseline; it does not optimize the proxy.",
+      "Formal latency percentiles and deeper CPU/syscall profiling remain later roadmap phases."
+    ]
+  },
+  "environment": {
+    "system": "Linux",
+    "kernel": "7.2.9-201.fc44.x86_64",
+    "machine": "x86_64",
+    "python": "3.14.8"
+  },
+  "direct_backend_pool": {
+    "requests": 1000,
+    "successes": 1000,
+    "failures": 0,
+    "duration_seconds": 1.348816,
+    "requests_per_second": 741.391,
+    "latency_ms": {
+      "mean": 28.256,
+      "min": 2.685,
+      "max": 1068.996
+    },
+    "backend_distribution": {
+      "backend-a": 500,
+      "backend-b": 500
+    },
+    "sample_errors": []
+  },
+  "proxy": {
+    "requests": 1000,
+    "successes": 1000,
+    "failures": 0,
+    "duration_seconds": 1.533178,
+    "requests_per_second": 652.24,
+    "latency_ms": {
+      "mean": 30.176,
+      "min": 2.931,
+      "max": 1061.749
+    },
+    "backend_distribution": {
+      "backend-a": 500,
+      "backend-b": 500
+    },
+    "sample_errors": []
+  },
+  "comparison": {
+    "proxy_throughput_as_percent_of_direct": 87.975,
+    "proxy_mean_latency_overhead_ms": 1.92
+  }
+}

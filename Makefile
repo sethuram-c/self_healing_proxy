@@ -2,6 +2,7 @@ CC := gcc
 
 CFLAGS := -std=c11 -Wall -Wextra -Wpedantic -Werror -g -O0
 SANFLAGS := -fsanitize=address,undefined -fno-omit-frame-pointer
+BENCH_CFLAGS := -std=c11 -Wall -Wextra -Wpedantic -Werror -O2 -DNDEBUG
 
 TARGET := build/microproxy
 SOURCE := src/main.c
@@ -11,6 +12,7 @@ TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
 NONBLOCKING_TEST := build/test_nonblocking
 EPOLL_SERVER := build/epoll_server
+BENCH_EPOLL := build/epoll_server-bench
 SANITIZED_EPOLL := build/epoll_server-sanitized
 SANITIZED_TCP := build/tcp_listener-sanitized
 CONNECTION_TEST := build/test_connection
@@ -38,7 +40,9 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	sanitize-backend-pool \
 	sanitize-http \
 	sanitize-tcp \
-	sanitize-epoll
+	sanitize-epoll \
+	benchmark \
+	stage2-gate
 
 all: $(TARGET)
 
@@ -105,6 +109,28 @@ $(EPOLL_SERVER): \
 		src/http_framing.c \
 		src/backend_pool.c \
 		-o $(EPOLL_SERVER)
+
+$(BENCH_EPOLL): \
+	src/epoll_server.c \
+	src/connection.c \
+	src/net_utils.c \
+	src/io_buffer.c \
+	src/http_framing.c \
+	src/backend_pool.c \
+	include/connection.h \
+	include/backend_pool.h \
+	include/net_utils.h \
+	include/io_buffer.h \
+	include/http_framing.h
+	mkdir -p build
+	$(CC) $(BENCH_CFLAGS) -Iinclude \
+		src/epoll_server.c \
+		src/connection.c \
+		src/net_utils.c \
+		src/io_buffer.c \
+		src/http_framing.c \
+		src/backend_pool.c \
+		-o $(BENCH_EPOLL)
 
 $(BACKEND_POOL_TEST): \
 	tests/unit/test_backend_pool.c \
@@ -201,6 +227,14 @@ test: \
 	test-integration \
 	test-stress
 
+benchmark: $(BENCH_EPOLL)
+	python3 scripts/benchmark_proxy.py \
+		--proxy-bin $(BENCH_EPOLL) \
+		--requests 1000 \
+		--concurrency 32 \
+		--warmup 100 \
+		--output benchmarks/phase20_baseline.json
+
 sanitize-main:
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANFLAGS) \
@@ -290,6 +324,9 @@ sanitize: \
 	sanitize-http \
 	sanitize-tcp \
 	sanitize-epoll
+
+stage2-gate: test sanitize benchmark
+	@echo "Stage 2 gate passed: tests, sanitizers, and benchmark completed."
 
 clean:
 	rm -rf build

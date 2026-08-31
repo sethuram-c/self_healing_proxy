@@ -249,7 +249,7 @@ class StageOneStressTests(
 
             self.assertIn(
                 (
-                    "total_bytes="
+                    "total_client_bytes="
                     f"{EXPECTED_TOTAL_BYTES}"
                 ),
                 stdout,
