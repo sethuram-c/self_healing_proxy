@@ -8,6 +8,7 @@ TARGET := build/microproxy
 SOURCE := src/main.c
 
 PROCESS_INSPECT := build/process_inspect
+NAMESPACE_INSPECT := build/namespace_inspect
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
 NONBLOCKING_TEST := build/test_nonblocking
@@ -25,6 +26,7 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	clean \
 	run \
 	inspect-process \
+	inspect-namespaces \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -57,6 +59,10 @@ $(PROCESS_INSPECT): src/process_inspect.c
 	$(CC) $(CFLAGS) \
 		src/process_inspect.c \
 		-o $(PROCESS_INSPECT)
+
+$(NAMESPACE_INSPECT): src/namespace_inspect.c
+	mkdir -p build
+	$(CC) $(CFLAGS) src/namespace_inspect.c -o $(NAMESPACE_INSPECT)
 
 $(TCP_LISTENER): \
 	src/tcp_listener.c \
@@ -171,6 +177,9 @@ run: all
 inspect-process: $(PROCESS_INSPECT)
 	./$(PROCESS_INSPECT)
 
+inspect-namespaces: $(NAMESPACE_INSPECT)
+	./$(NAMESPACE_INSPECT)
+
 tcp-listener: $(TCP_LISTENER)
 	./$(TCP_LISTENER)
 
@@ -190,6 +199,7 @@ mock-backend-b:
 test-unit: \
 	all \
 	$(PROCESS_INSPECT) \
+	$(NAMESPACE_INSPECT) \
 	$(IO_BUFFER_TEST) \
 	$(NONBLOCKING_TEST) \
 	$(CONNECTION_TEST) \
@@ -197,6 +207,7 @@ test-unit: \
 	$(HTTP_FRAMING_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
+	python3 tests/unit/test_namespace_inspect.py
 	./$(IO_BUFFER_TEST)
 	./$(NONBLOCKING_TEST)
 	./$(CONNECTION_TEST)

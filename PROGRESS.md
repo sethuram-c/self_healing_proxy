@@ -805,3 +805,43 @@ Required final conditions:
 
 After those conditions pass, set Phase 20 to `COMPLETE` and this Stage 2 closure
 status to `COMPLETE`.
+
+
+## Phase 21 — Linux Process Model and Namespace Inspection
+
+Status: IMPLEMENTED — AWAITING LOCAL FEDORA QUALITY GATE
+
+### Concepts Learned
+
+- Process identity: PID versus parent PID; processes versus threads
+- Kernel namespace types: user, pid, mount, net, IPC, UTS, cgroup, time
+- `/proc/<PID>/ns/*` namespace handles and inode identities
+- `readlink()` displays namespace labels; `stat()` compares kernel objects
+- Namespace membership is not equivalent to a security boundary
+- Inspecting another process does not require `unshare()` or privilege
+- Namespace creation and PID/mount isolation are reserved for Phase 22
+
+### Implementation
+
+- `src/namespace_inspect.c`: inspect own and optional target PID namespace membership
+- `tests/unit/test_namespace_inspect.py`: self, child, invalid PID and argument tests
+- Makefile targets: `make inspect-namespaces`, inclusion in `make test-unit`
+- Existing proxy network event loop remains unchanged
+
+### Quality Gate
+
+- `make clean && make test`: PENDING LOCAL FEDORA RUN
+- `make sanitize`: PENDING LOCAL FEDORA RUN
+- `make inspect-namespaces`: PENDING LOCAL FEDORA RUN
+- `./build/namespace_inspect $$`: PENDING LOCAL FEDORA RUN (use a real PID)
+- `git diff --check`: PENDING LOCAL FEDORA RUN
+- Commit only after all gates pass
+
+### Scope Note
+
+Phase 21 inspects namespace identities without creating namespace boundaries.
+A separate worker/supervisor is not introduced: process supervision belongs to Stage 5.
+
+### Next Phase
+
+Phase 22 — PID and mount namespace experiments and isolated process-tree verification.
