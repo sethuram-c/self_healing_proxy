@@ -845,3 +845,44 @@ A separate worker/supervisor is not introduced: process supervision belongs to S
 ### Next Phase
 
 Phase 22 — PID and mount namespace experiments and isolated process-tree verification.
+
+
+## Phase 22 — PID and Mount Namespace Isolation
+
+Status: IMPLEMENTED — AWAITING LOCAL FEDORA QUALITY GATE
+
+### Concepts Learned
+
+- Linux `unshare(CLONE_NEWUSER)` and UID/GID mapping for rootless experiments
+- `CLONE_NEWNS` creates a separate mount namespace
+- `CLONE_NEWPID` affects only subsequently forked children
+- The first child in a new PID namespace becomes PID 1
+- `/proc` must be remounted in the isolated mount namespace to reflect its PID tree
+- `MS_REC | MS_PRIVATE` prevents mount propagation back to the host
+- `waitpid()` reaps child processes to prevent zombies
+- Exit status 77 distinguishes host restrictions from implementation failures
+
+### Implementation
+
+- `src/pid_mount_lab.c`: disposable process experiment, never launches the proxy
+- `tests/unit/test_pid_mount_lab.py`: CLI, bad args, and kernel isolation verification
+- Makefile: `make pid-mount-lab` and integration in `make test-unit`
+- Existing Stage 2 epoll proxy and routing logic are unchanged
+
+### Quality Gate
+
+- strict compilation: PENDING LOCAL FEDORA RUN
+- CLI tests: PENDING LOCAL FEDORA RUN
+- PID 1 and PID 2 visibility: PENDING LOCAL FEDORA RUN
+- mount namespace /proc visibility: PENDING LOCAL FEDORA RUN
+- `make test`: PENDING LOCAL FEDORA RUN
+- `make sanitize`: PENDING LOCAL FEDORA RUN
+- `git diff --check`: PENDING LOCAL FEDORA RUN
+
+A 77/skip result is **not** isolation PASS; diagnose kernel user namespace
+settings or repeat the experiment in a disposable Fedora VM. Do not bypass
+namespace restrictions on a production host merely to satisfy this phase.
+
+### Next Phase
+
+Phase 23 — Network namespaces and virtual Ethernet.

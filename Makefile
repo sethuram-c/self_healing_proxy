@@ -9,6 +9,7 @@ SOURCE := src/main.c
 
 PROCESS_INSPECT := build/process_inspect
 NAMESPACE_INSPECT := build/namespace_inspect
+PID_MOUNT_LAB := build/pid_mount_lab
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
 NONBLOCKING_TEST := build/test_nonblocking
@@ -27,6 +28,7 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	run \
 	inspect-process \
 	inspect-namespaces \
+	pid-mount-lab \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -63,6 +65,10 @@ $(PROCESS_INSPECT): src/process_inspect.c
 $(NAMESPACE_INSPECT): src/namespace_inspect.c
 	mkdir -p build
 	$(CC) $(CFLAGS) src/namespace_inspect.c -o $(NAMESPACE_INSPECT)
+
+$(PID_MOUNT_LAB): src/pid_mount_lab.c
+	mkdir -p build
+	$(CC) $(CFLAGS) src/pid_mount_lab.c -o $(PID_MOUNT_LAB)
 
 $(TCP_LISTENER): \
 	src/tcp_listener.c \
@@ -180,6 +186,9 @@ inspect-process: $(PROCESS_INSPECT)
 inspect-namespaces: $(NAMESPACE_INSPECT)
 	./$(NAMESPACE_INSPECT)
 
+pid-mount-lab: $(PID_MOUNT_LAB)
+	./$(PID_MOUNT_LAB)
+
 tcp-listener: $(TCP_LISTENER)
 	./$(TCP_LISTENER)
 
@@ -197,6 +206,7 @@ mock-backend-b:
 		--port 9002
 
 test-unit: \
+	$(PID_MOUNT_LAB) \
 	all \
 	$(PROCESS_INSPECT) \
 	$(NAMESPACE_INSPECT) \
@@ -208,6 +218,7 @@ test-unit: \
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
+	python3 tests/unit/test_pid_mount_lab.py
 	./$(IO_BUFFER_TEST)
 	./$(NONBLOCKING_TEST)
 	./$(CONNECTION_TEST)
