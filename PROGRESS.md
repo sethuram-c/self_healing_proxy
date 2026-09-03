@@ -886,3 +886,75 @@ namespace restrictions on a production host merely to satisfy this phase.
 ### Next Phase
 
 Phase 23 — Network namespaces and virtual Ethernet.
+
+
+## Phase 23 — Network Namespaces and Virtual Ethernet
+
+Status: IN PROGRESS
+
+### Concepts Learned
+
+- A network namespace owns its own interfaces, addresses, routes, sockets, and loopback device
+- `/proc/<PID>/ns/net` identifies the kernel network-namespace object
+- A veth pair behaves like an in-kernel Ethernet cable: packets entering one endpoint emerge from the peer
+- Moving each veth endpoint into a different network namespace creates a private point-to-point L2 path
+- Interfaces start administratively down and loopback must be enabled independently in each network namespace
+- Same-subnet `/30` addressing allows the two namespaces to communicate without a router
+- Network-namespace creation and veth manipulation require `CAP_NET_ADMIN`; this phase uses a disposable root-only lab
+- Cleanup must be idempotent because partial namespace creation can otherwise leave stale names/interfaces behind
+
+### Implementation
+
+- `scripts/netns_veth_lab.sh`
+  - `setup`: create two named namespaces and one veth pair
+  - `verify`: compare namespace identities and test bidirectional ICMP reachability
+  - `status`: show per-namespace links, addresses, and routes
+  - `cleanup`: safely remove the disposable topology, including partial leftovers
+- `tests/integration/test_netns_veth.py`
+  - CLI/help validation
+  - invalid-command rejection
+  - unique per-test namespace/interface names
+  - real root/CAP_NET_ADMIN setup/verify/cleanup test
+  - duplicate-setup rejection
+  - bidirectional ping verification
+  - distinct host/edge/backend namespace identity verification
+  - idempotent cleanup verification
+- `make test` may explicitly SKIP the privileged topology when run unprivileged
+- `make phase23-gate` reruns the real topology with sudo and does not accept that skip as Phase 23 completion
+
+### Lab Topology
+
+```text
+namespace: shp23-edge                  namespace: shp23-backend
+10.203.0.1/30                          10.203.0.2/30
+       p23-edge0 <========================> p23-back0
+                           veth
+```
+
+### Quality Gate
+
+- Phase 22 PID/mount isolation must already be genuinely verified: PENDING USER CONFIRMATION
+- `scripts/netns_veth_lab.sh help`: PENDING LOCAL FEDORA RUN
+- root setup creates both namespaces and both veth endpoints: PENDING LOCAL FEDORA RUN
+- host, edge, and backend network namespace IDs are all distinct: PENDING LOCAL FEDORA RUN
+- edge -> backend ping succeeds: PENDING LOCAL FEDORA RUN
+- backend -> edge ping succeeds: PENDING LOCAL FEDORA RUN
+- duplicate setup is rejected rather than destroying an existing topology: PENDING LOCAL FEDORA RUN
+- cleanup succeeds twice and leaves no `shp23-*` namespace: PENDING LOCAL FEDORA RUN
+- `make test`: PENDING LOCAL FEDORA RUN
+- `make sanitize`: PENDING LOCAL FEDORA RUN
+- `git diff --check`: PENDING LOCAL FEDORA RUN
+
+A normal unprivileged `make test` skip is not sufficient to complete Phase 23.
+The privileged integration run must actually create, verify, and clean up the
+network namespaces and veth pair on the Fedora development host.
+
+### Scope Note
+
+Phase 23 demonstrates L2/L3 isolation only. It does not yet run the micro-proxy
+inside the namespace, configure host-to-namespace routing/NAT, create cgroups, or
+build the Python isolation launcher. Those are later Stage 3 responsibilities.
+
+### Next Phase
+
+Phase 24 — cgroups v2 foundations and bounded resource groups.

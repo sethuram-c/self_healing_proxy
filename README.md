@@ -20,12 +20,14 @@ The project currently includes:
 - Conservative pre-send backend failover with replay suppression after upstream bytes are sent
 - Deterministic Python HTTP test backends
 - Unit, integration, stress, and ASan/UBSan test targets
+- Linux namespace inspection plus PID/mount isolation experiments
+- Disposable network-namespace + veth isolation lab
 
 ## Planned later stages
 
 The roadmap later adds:
 
-- Linux namespaces and cgroups v2
+- cgroups v2 resource isolation
 - Unix-domain-socket IPC
 - OpenTelemetry metrics and traces
 - Watchdog/supervisor-based self-healing
@@ -107,3 +109,29 @@ suite, and the optimized Phase 20 benchmark in sequence. Stage 2 should only be
 marked complete after all three finish successfully on the local development
 machine.
 
+
+
+## Phase 23 network namespace lab
+
+Phase 23 creates two disposable named network namespaces connected by a veth
+pair. The lab requires root/CAP_NET_ADMIN and does not modify the reverse-proxy
+networking core.
+
+```bash
+scripts/netns_veth_lab.sh help
+sudo scripts/netns_veth_lab.sh setup
+sudo scripts/netns_veth_lab.sh status
+sudo scripts/netns_veth_lab.sh verify
+sudo scripts/netns_veth_lab.sh cleanup
+```
+
+The required Phase 23 gate is:
+
+```bash
+make phase23-gate
+git diff --check
+git status --short
+```
+
+An unprivileged skip from the network-namespace integration test is useful for
+normal regression runs but is not considered Phase 23 verification.

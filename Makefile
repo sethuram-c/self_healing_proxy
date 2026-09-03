@@ -10,6 +10,7 @@ SOURCE := src/main.c
 PROCESS_INSPECT := build/process_inspect
 NAMESPACE_INSPECT := build/namespace_inspect
 PID_MOUNT_LAB := build/pid_mount_lab
+NETNS_VETH_LAB := scripts/netns_veth_lab.sh
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
 NONBLOCKING_TEST := build/test_nonblocking
@@ -29,6 +30,9 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	inspect-process \
 	inspect-namespaces \
 	pid-mount-lab \
+	netns-veth-lab \
+	test-netns-veth \
+	phase23-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -189,6 +193,13 @@ inspect-namespaces: $(NAMESPACE_INSPECT)
 pid-mount-lab: $(PID_MOUNT_LAB)
 	./$(PID_MOUNT_LAB)
 
+netns-veth-lab:
+	@echo "Phase 23 topology commands require root; use:"
+	@echo "  sudo $(NETNS_VETH_LAB) setup"
+	@echo "  sudo $(NETNS_VETH_LAB) verify"
+	@echo "  sudo $(NETNS_VETH_LAB) status"
+	@echo "  sudo $(NETNS_VETH_LAB) cleanup"
+
 tcp-listener: $(TCP_LISTENER)
 	./$(TCP_LISTENER)
 
@@ -240,6 +251,7 @@ test-integration: \
 	python3 tests/integration/test_round_robin.py
 	python3 tests/integration/test_admission_control.py
 	python3 tests/integration/test_retry_safety.py
+	python3 tests/integration/test_netns_veth.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -349,6 +361,16 @@ sanitize: \
 
 stage2-gate: test sanitize benchmark
 	@echo "Stage 2 gate passed: tests, sanitizers, and benchmark completed."
+
+test-netns-veth:
+	python3 tests/integration/test_netns_veth.py
+
+phase23-gate:
+	python3 tests/integration/test_netns_veth.py
+	sudo env PHASE23_REQUIRE_REAL=1 python3 tests/integration/test_netns_veth.py
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 23 gate passed: real netns/veth topology plus regressions completed."
 
 clean:
 	rm -rf build
