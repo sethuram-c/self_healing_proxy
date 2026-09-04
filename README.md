@@ -135,3 +135,30 @@ git status --short
 
 An unprivileged skip from the network-namespace integration test is useful for
 normal regression runs but is not considered Phase 23 verification.
+
+## Phase 24 cgroups v2 lab
+
+Phase 24 introduces the resource-control side of Linux isolation. It creates one
+disposable cgroup v2 leaf, moves a sleeper process into it, and verifies
+membership plus CPU/memory/PID accounting. It deliberately does **not** set
+`memory.max`, `cpu.max`, or `pids.max`; those limits belong to later phases.
+
+```bash
+scripts/cgroup_v2_lab.sh help
+sudo scripts/cgroup_v2_lab.sh setup
+sudo scripts/cgroup_v2_lab.sh status
+sudo scripts/cgroup_v2_lab.sh verify
+sudo scripts/cgroup_v2_lab.sh cleanup
+```
+
+The required Phase 24 gate is:
+
+```bash
+make phase24-gate
+git diff --check
+git status --short
+```
+
+A normal unprivileged `make test` may skip the privileged cgroup creation test.
+That skip is not Phase 24 completion; the sudo-backed gate must actually create,
+verify, and remove the disposable cgroup on the Fedora development host.

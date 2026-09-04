@@ -11,6 +11,7 @@ PROCESS_INSPECT := build/process_inspect
 NAMESPACE_INSPECT := build/namespace_inspect
 PID_MOUNT_LAB := build/pid_mount_lab
 NETNS_VETH_LAB := scripts/netns_veth_lab.sh
+CGROUP_V2_LAB := scripts/cgroup_v2_lab.sh
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
 NONBLOCKING_TEST := build/test_nonblocking
@@ -33,6 +34,9 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	netns-veth-lab \
 	test-netns-veth \
 	phase23-gate \
+	cgroup-v2-lab \
+	test-cgroup-v2 \
+	phase24-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -200,6 +204,14 @@ netns-veth-lab:
 	@echo "  sudo $(NETNS_VETH_LAB) status"
 	@echo "  sudo $(NETNS_VETH_LAB) cleanup"
 
+
+cgroup-v2-lab:
+	@echo "Phase 24 cgroup v2 lab commands require root; use:"
+	@echo "  sudo $(CGROUP_V2_LAB) setup"
+	@echo "  sudo $(CGROUP_V2_LAB) verify"
+	@echo "  sudo $(CGROUP_V2_LAB) status"
+	@echo "  sudo $(CGROUP_V2_LAB) cleanup"
+
 tcp-listener: $(TCP_LISTENER)
 	./$(TCP_LISTENER)
 
@@ -252,6 +264,7 @@ test-integration: \
 	python3 tests/integration/test_admission_control.py
 	python3 tests/integration/test_retry_safety.py
 	python3 tests/integration/test_netns_veth.py
+	python3 tests/integration/test_cgroup_v2.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -371,6 +384,17 @@ phase23-gate:
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 23 gate passed: real netns/veth topology plus regressions completed."
+
+
+test-cgroup-v2:
+	python3 tests/integration/test_cgroup_v2.py
+
+phase24-gate:
+	python3 tests/integration/test_cgroup_v2.py
+	sudo env PHASE24_REQUIRE_REAL=1 python3 tests/integration/test_cgroup_v2.py
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 24 gate passed: real cgroup v2 membership/accounting plus regressions completed."
 
 clean:
 	rm -rf build

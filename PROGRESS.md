@@ -958,3 +958,87 @@ build the Python isolation launcher. Those are later Stage 3 responsibilities.
 ### Next Phase
 
 Phase 24 — cgroups v2 foundations and bounded resource groups.
+
+
+## Phase 24 — cgroups v2 Foundations and Resource Accounting
+
+Status: IN PROGRESS
+
+### Concepts Learned
+
+- Namespaces isolate visibility; cgroups control and account for resource consumption
+- Fedora/systemd uses the unified cgroup v2 hierarchy exposed at `/sys/fs/cgroup`
+- `cgroup.controllers` lists controllers available to children of a cgroup
+- `cgroup.subtree_control` determines which controllers are enabled for child cgroups
+- `cgroup.procs` moves whole processes between cgroups by PID
+- `/proc/<PID>/cgroup` is the process-side source of truth for cgroup membership
+- `cpu.stat`, `memory.current`, and `pids.current` expose per-cgroup accounting
+- A cgroup must be empty before its directory can be removed
+- Cleanup must be idempotent and must never kill unknown processes merely to satisfy a test
+- Phase 24 intentionally reads accounting only; memory, CPU, and PID limits are introduced separately
+
+### Implementation
+
+- `scripts/cgroup_v2_lab.sh`
+  - `setup`: create one disposable leaf cgroup and move one `sleep` worker into it
+  - `verify`: cross-check `cgroup.procs`, `/proc/<PID>/cgroup`, and controller accounting
+  - `status`: print root controllers, subtree control, membership, and accounting files
+  - `cleanup`: stop only the recorded lab worker, refuse unknown remaining tasks, and remove the leaf
+  - does not write `cgroup.subtree_control` or resource-limit files
+- `tests/integration/test_cgroup_v2.py`
+  - CLI/help validation
+  - invalid-command rejection
+  - unique per-test cgroup/state names
+  - real root-backed setup/verify/cleanup test
+  - duplicate-setup rejection
+  - PID membership verification
+  - CPU/memory/PID accounting verification
+  - idempotent cleanup verification
+- `make test` may explicitly SKIP the privileged creation test when run unprivileged
+- `make phase24-gate` reruns the real cgroup test with sudo and does not accept that skip as completion
+
+### Lab Model
+
+```text
+/sys/fs/cgroup
+      |
+      +-- shp24-lab/              disposable cgroup v2 leaf
+             |
+             +-- cgroup.procs     contains one lab worker PID
+             +-- cpu.stat         CPU accounting
+             +-- memory.current   current charged memory
+             +-- pids.current     current task/process count
+```
+
+### Quality Gate
+
+- Phase 23 network namespace/veth isolation genuinely verified: PENDING USER CONFIRMATION
+- unified cgroup v2 hierarchy detected: PENDING LOCAL FEDORA RUN
+- root controller and subtree state inspected: PENDING LOCAL FEDORA RUN
+- disposable cgroup leaf created: PENDING LOCAL FEDORA RUN
+- worker PID appears in leaf `cgroup.procs`: PENDING LOCAL FEDORA RUN
+- worker `/proc/<PID>/cgroup` reports the same cgroup path: PENDING LOCAL FEDORA RUN
+- `cpu.stat` readable and exposes numeric `usage_usec`: PENDING LOCAL FEDORA RUN
+- `memory.current` readable and numeric: PENDING LOCAL FEDORA RUN
+- `pids.current` reports at least one task: PENDING LOCAL FEDORA RUN
+- duplicate setup rejected: PENDING LOCAL FEDORA RUN
+- cleanup succeeds twice and leaves no Phase 24 cgroup: PENDING LOCAL FEDORA RUN
+- `make test`: PENDING LOCAL FEDORA RUN
+- `make sanitize`: PENDING LOCAL FEDORA RUN
+- `git diff --check`: PENDING LOCAL FEDORA RUN
+
+A normal unprivileged test skip is not sufficient to complete Phase 24. The
+privileged integration run must actually create the leaf cgroup, move the worker,
+verify membership/accounting, and remove the leaf on Fedora.
+
+### Scope Note
+
+Phase 24 establishes cgroup v2 hierarchy mechanics and accounting only. It does
+not intentionally trigger OOM, set `memory.max`, throttle CPU with `cpu.max`, or
+launch the proxy inside a cgroup. Memory/OOM and CPU quota behavior are separate
+later phases so each resource-control mechanism can be understood and tested in
+isolation.
+
+### Next Phase
+
+Phase 25 — Memory limits, memory pressure, and controlled OOM behavior.
