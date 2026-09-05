@@ -162,3 +162,44 @@ git status --short
 A normal unprivileged `make test` may skip the privileged cgroup creation test.
 That skip is not Phase 24 completion; the sudo-backed gate must actually create,
 verify, and remove the disposable cgroup on the Fedora development host.
+
+## Phase 25 memory limit and controlled OOM lab
+
+Phase 25 turns Phase 24's accounting-only cgroup into a bounded memory domain.
+A dedicated C worker allocates and touches anonymous pages so memory is genuinely
+charged to the cgroup. The worker starts SIGSTOP-paused, is moved into the leaf,
+then resumes only after `memory.max` is installed. This prevents pre-cgroup
+allocation from contaminating the experiment.
+
+Default experiment:
+
+```text
+memory.max        = 32 MiB
+memory.swap.max   = 0 when available
+allocation target = 128 MiB
+```
+
+Run the lab:
+
+```bash
+make build/memory_pressure
+scripts/cgroup_memory_lab.sh help
+sudo scripts/cgroup_memory_lab.sh setup
+sudo scripts/cgroup_memory_lab.sh status
+sudo scripts/cgroup_memory_lab.sh verify
+sudo scripts/cgroup_memory_lab.sh cleanup
+```
+
+The verifier requires `memory.events` to report a real limit hit, OOM, and OOM
+kill. A normal unprivileged regression run may explicitly skip the privileged
+cgroup portion; that skip is not Phase 25 completion.
+
+Required Fedora gate:
+
+```bash
+make phase25-gate
+git diff --check
+git status --short
+```
+
+Phase 25 intentionally does not set `cpu.max`; CPU quota/throttling is Phase 26.

@@ -12,6 +12,8 @@ NAMESPACE_INSPECT := build/namespace_inspect
 PID_MOUNT_LAB := build/pid_mount_lab
 NETNS_VETH_LAB := scripts/netns_veth_lab.sh
 CGROUP_V2_LAB := scripts/cgroup_v2_lab.sh
+MEMORY_PRESSURE := build/memory_pressure
+CGROUP_MEMORY_LAB := scripts/cgroup_memory_lab.sh
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
 NONBLOCKING_TEST := build/test_nonblocking
@@ -37,6 +39,9 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	cgroup-v2-lab \
 	test-cgroup-v2 \
 	phase24-gate \
+	cgroup-memory-lab \
+	test-cgroup-memory \
+	phase25-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -51,6 +56,7 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	sanitize-nonblocking \
 	sanitize-backend-pool \
 	sanitize-http \
+	sanitize-memory-pressure \
 	sanitize-tcp \
 	sanitize-epoll \
 	benchmark \
@@ -77,6 +83,10 @@ $(NAMESPACE_INSPECT): src/namespace_inspect.c
 $(PID_MOUNT_LAB): src/pid_mount_lab.c
 	mkdir -p build
 	$(CC) $(CFLAGS) src/pid_mount_lab.c -o $(PID_MOUNT_LAB)
+
+$(MEMORY_PRESSURE): src/memory_pressure.c
+	mkdir -p build
+	$(CC) $(CFLAGS) src/memory_pressure.c -o $(MEMORY_PRESSURE)
 
 $(TCP_LISTENER): \
 	src/tcp_listener.c \
@@ -212,6 +222,13 @@ cgroup-v2-lab:
 	@echo "  sudo $(CGROUP_V2_LAB) status"
 	@echo "  sudo $(CGROUP_V2_LAB) cleanup"
 
+cgroup-memory-lab: $(MEMORY_PRESSURE)
+	@echo "Phase 25 memory/OOM lab commands require root; use:"
+	@echo "  sudo $(CGROUP_MEMORY_LAB) setup"
+	@echo "  sudo $(CGROUP_MEMORY_LAB) status"
+	@echo "  sudo $(CGROUP_MEMORY_LAB) verify"
+	@echo "  sudo $(CGROUP_MEMORY_LAB) cleanup"
+
 tcp-listener: $(TCP_LISTENER)
 	./$(TCP_LISTENER)
 
@@ -230,6 +247,7 @@ mock-backend-b:
 
 test-unit: \
 	$(PID_MOUNT_LAB) \
+	$(MEMORY_PRESSURE) \
 	all \
 	$(PROCESS_INSPECT) \
 	$(NAMESPACE_INSPECT) \
@@ -242,6 +260,7 @@ test-unit: \
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
 	python3 tests/unit/test_pid_mount_lab.py
+	python3 tests/unit/test_memory_pressure.py
 	./$(IO_BUFFER_TEST)
 	./$(NONBLOCKING_TEST)
 	./$(CONNECTION_TEST)
@@ -265,6 +284,7 @@ test-integration: \
 	python3 tests/integration/test_retry_safety.py
 	python3 tests/integration/test_netns_veth.py
 	python3 tests/integration/test_cgroup_v2.py
+	python3 tests/integration/test_cgroup_memory_oom.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -321,6 +341,11 @@ sanitize-http:
 		-o build/test_http_framing-sanitized
 	./build/test_http_framing-sanitized
 
+sanitize-memory-pressure:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) src/memory_pressure.c -o build/memory_pressure-sanitized
+	MEMORY_PRESSURE_BIN=build/memory_pressure-sanitized python3 tests/unit/test_memory_pressure.py
+
 sanitize-tcp:
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
@@ -369,6 +394,7 @@ sanitize: \
 	sanitize-nonblocking \
 	sanitize-backend-pool \
 	sanitize-http \
+	sanitize-memory-pressure \
 	sanitize-tcp \
 	sanitize-epoll
 
@@ -388,6 +414,7 @@ phase23-gate:
 
 test-cgroup-v2:
 	python3 tests/integration/test_cgroup_v2.py
+	python3 tests/integration/test_cgroup_memory_oom.py
 
 phase24-gate:
 	python3 tests/integration/test_cgroup_v2.py
@@ -395,6 +422,18 @@ phase24-gate:
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 24 gate passed: real cgroup v2 membership/accounting plus regressions completed."
+
+
+test-cgroup-memory: $(MEMORY_PRESSURE)
+	python3 tests/integration/test_cgroup_memory_oom.py
+
+phase25-gate: $(MEMORY_PRESSURE)
+	python3 tests/unit/test_memory_pressure.py
+	python3 tests/integration/test_cgroup_memory_oom.py
+	sudo env PHASE25_REQUIRE_REAL=1 python3 tests/integration/test_cgroup_memory_oom.py
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 25 gate passed: memory.max enforcement, controlled OOM, and regressions completed."
 
 clean:
 	rm -rf build

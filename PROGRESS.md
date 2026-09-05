@@ -1042,3 +1042,98 @@ isolation.
 ### Next Phase
 
 Phase 25 — Memory limits, memory pressure, and controlled OOM behavior.
+
+
+## Phase 25 — Memory Limits, Memory Pressure, and Controlled OOM
+
+Status: IN PROGRESS
+
+### Concepts Learned
+
+- `memory.current` reports current memory charged to a cgroup; `memory.max` imposes a hard upper boundary
+- Virtual allocation alone is not enough for a deterministic memory test; pages must be touched so the kernel actually charges them
+- A pressure worker must enter the cgroup before allocation begins, otherwise host-side allocation can race ahead of the limit
+- `memory.swap.max=0` (when available) prevents swap from masking the memory.max experiment
+- `memory.events` exposes `max`, `oom`, and `oom_kill` counters that prove enforcement happened in the cgroup
+- A cgroup OOM kill is scoped to the offending cgroup workload; it does not mean the entire host is globally out of memory
+- `cgroup.events populated 0` confirms the workload has left the cgroup after the kill
+- Cleanup after OOM differs from normal cleanup because the recorded PID may already be dead
+- Phase 25 intentionally uses one disposable memory worker and does not yet throttle CPU
+
+### Implementation
+
+- `src/memory_pressure.c`
+  - requires an explicit `--mib` target
+  - optionally stops itself with SIGSTOP before allocation
+  - allocates anonymous memory and touches every page to force real memory charging
+  - emits READY/START/COMPLETE markers so tests can distinguish lifecycle stages
+- `scripts/cgroup_memory_lab.sh`
+  - `setup`: create one Phase 25 leaf, set memory.max, disable swap when supported, start the worker paused, move it into the cgroup, then resume it
+  - `verify`: wait for the worker to leave the cgroup and require memory.events max/oom/oom_kill counters
+  - `status`: show memory.current, memory.peak when available, memory.max, swap state, memory.events, cgroup.events, membership, and worker log
+  - `cleanup`: stop only the recorded worker if it survived, refuse unknown remaining tasks, and remove the leaf idempotently
+- `tests/unit/test_memory_pressure.py`
+  - help contract
+  - required/invalid argument checks
+  - small allocation completion proving pages are actually touched
+- `tests/integration/test_cgroup_memory_oom.py`
+  - CLI contract and invalid configuration tests
+  - unique root-backed test cgroup
+  - 32 MiB memory.max vs 128 MiB touched allocation
+  - duplicate setup rejection
+  - required OOM/oom_kill event verification
+  - verification that the worker did not reach its COMPLETE marker
+  - cleanup and second-cleanup verification
+- `make test` may skip only the privileged Phase 25 topology when unprivileged
+- `make phase25-gate` requires the real root-backed memory/OOM experiment and then runs full regressions/sanitizers
+
+### Default Lab Model
+
+```text
+/sys/fs/cgroup
+      |
+      +-- shp25-memory/
+             |
+             +-- memory.max = 32 MiB
+             +-- memory.swap.max = 0 (when available)
+             +-- cgroup.procs -> memory_pressure PID
+             |
+             +-- memory_pressure --mib 128
+                       |
+                       +-- touches pages
+                       +-- reaches cgroup memory boundary
+                       +-- kernel records OOM
+                       +-- kernel kills worker
+```
+
+### Quality Gate
+
+- Phase 24 cgroup v2 accounting gate genuinely verified: PENDING USER CONFIRMATION
+- strict `memory_pressure.c` compilation: PENDING LOCAL FEDORA RUN
+- memory-pressure CLI/unit tests: PENDING LOCAL FEDORA RUN
+- disposable Phase 25 cgroup created: PENDING LOCAL FEDORA RUN
+- `memory.max` equals configured hard limit: PENDING LOCAL FEDORA RUN
+- worker is moved into cgroup before SIGCONT: PENDING LOCAL FEDORA RUN
+- worker attempts allocation above limit: PENDING LOCAL FEDORA RUN
+- `memory.events max >= 1`: PENDING LOCAL FEDORA RUN
+- `memory.events oom >= 1`: PENDING LOCAL FEDORA RUN
+- `memory.events oom_kill >= 1`: PENDING LOCAL FEDORA RUN
+- worker does not emit `MEMORY_PRESSURE_COMPLETE`: PENDING LOCAL FEDORA RUN
+- `cgroup.events populated 0` after OOM: PENDING LOCAL FEDORA RUN
+- cleanup succeeds twice and leaves no Phase 25 cgroup: PENDING LOCAL FEDORA RUN
+- `make test`: PENDING LOCAL FEDORA RUN
+- `make sanitize`: PENDING LOCAL FEDORA RUN
+- `git diff --check`: PENDING LOCAL FEDORA RUN
+
+An unprivileged skip is not Phase 25 completion. The Fedora sudo-backed gate must
+actually enforce memory.max and observe the cgroup OOM event counters.
+
+### Scope Note
+
+Phase 25 studies the memory controller only. It does not write `cpu.max`, benchmark
+CPU throttling, or launch the production proxy under cgroup limits. CPU quotas are
+Phase 26; orchestration comes later.
+
+### Next Phase
+
+Phase 26 — CPU quotas and throttling with `cpu.max` and `cpu.stat`.
