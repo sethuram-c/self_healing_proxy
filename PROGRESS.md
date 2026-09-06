@@ -1137,3 +1137,98 @@ Phase 26; orchestration comes later.
 ### Next Phase
 
 Phase 26 — CPU quotas and throttling with `cpu.max` and `cpu.stat`.
+
+
+## Phase 26 — CPU Quotas and Throttling
+
+Status: IN PROGRESS
+
+### Concepts Learned
+
+- `cpu.max` controls CPU bandwidth in cgroups v2 using a quota and period
+- `20000 100000` means roughly 20 ms of CPU time may be consumed per 100 ms period
+- CPU quota exhaustion normally throttles a runnable task instead of killing it
+- `cpu.stat` exposes `usage_usec`, `nr_periods`, `nr_throttled`, and `throttled_usec`
+- Throttling should be proven from counter deltas across a controlled observation window rather than from wall-clock timing alone
+- A CPU-pressure worker should enter the cgroup before its busy loop begins, so Phase 26 again uses a SIGSTOP/SIGCONT handoff
+- `/proc/<PID>/cgroup` and `cgroup.procs` are cross-checked to prove membership before measuring throttling
+- CPU control and memory/OOM enforcement are deliberately kept separate because their failure semantics differ
+
+### Implementation
+
+- `src/cpu_pressure.c`
+  - requires `--duration-ms`
+  - optionally raises SIGSTOP before the busy loop
+  - burns CPU using a monotonic-clock-bounded deterministic arithmetic loop
+  - emits READY/START/COMPLETE markers
+- `scripts/cgroup_cpu_lab.sh`
+  - `setup`: create a Phase 26 leaf, write `cpu.max`, start the worker paused, move it into the cgroup, then resume it
+  - `verify`: sample `cpu.stat`, wait through multiple quota periods, require positive throttling deltas, and prove the worker is still alive
+  - `status`: show root controller state, `cpu.max`, `cpu.stat`, cgroup membership, and worker log
+  - `cleanup`: terminate only the recorded worker, refuse unknown remaining tasks, and remove the leaf idempotently
+- `tests/unit/test_cpu_pressure.py`
+  - help contract
+  - missing/invalid duration rejection
+  - short CPU-burn completion
+- `tests/integration/test_cgroup_cpu_throttle.py`
+  - CLI and invalid-configuration tests
+  - unique root-backed Phase 26 cgroup
+  - `cpu.max = 20000 100000`
+  - duplicate setup rejection
+  - positive deltas for usage, periods, throttle count, and throttled time
+  - worker-alive-after-throttling assertion
+  - cleanup and second-cleanup verification
+- `make phase26-gate` requires the real root-backed throttling experiment and then runs full regressions/sanitizers
+
+### Default Lab Model
+
+```text
+/sys/fs/cgroup
+      |
+      +-- shp26-cpu/
+             |
+             +-- cpu.max = 20000 100000
+             +-- cgroup.procs -> cpu_pressure PID
+             +-- cpu.stat
+                    |
+                    +-- usage_usec increases
+                    +-- nr_periods increases
+                    +-- nr_throttled increases
+                    +-- throttled_usec increases
+
+cpu_pressure remains alive while the scheduler throttles it.
+```
+
+### Quality Gate
+
+- Phase 25 memory/OOM gate genuinely verified: PENDING USER CONFIRMATION
+- strict `cpu_pressure.c` compilation: PENDING LOCAL FEDORA RUN
+- CPU-pressure CLI/unit tests: PENDING LOCAL FEDORA RUN
+- CPU controller available to disposable child cgroup: PENDING LOCAL FEDORA RUN
+- `cpu.max` equals `20000 100000`: PENDING LOCAL FEDORA RUN
+- worker enters cgroup before SIGCONT: PENDING LOCAL FEDORA RUN
+- `/proc/<PID>/cgroup` matches Phase 26 leaf: PENDING LOCAL FEDORA RUN
+- `cpu.stat usage_usec` increases during sample: PENDING LOCAL FEDORA RUN
+- `cpu.stat nr_periods` increases during sample: PENDING LOCAL FEDORA RUN
+- `cpu.stat nr_throttled` increases during sample: PENDING LOCAL FEDORA RUN
+- `cpu.stat throttled_usec` increases during sample: PENDING LOCAL FEDORA RUN
+- worker remains alive after throttling sample: PENDING LOCAL FEDORA RUN
+- duplicate setup rejected: PENDING LOCAL FEDORA RUN
+- cleanup succeeds twice and leaves no Phase 26 cgroup: PENDING LOCAL FEDORA RUN
+- `make test`: PENDING LOCAL FEDORA RUN
+- `make sanitize`: PENDING LOCAL FEDORA RUN
+- `git diff --check`: PENDING LOCAL FEDORA RUN
+
+An unprivileged skip is not Phase 26 completion. The Fedora sudo-backed gate must
+actually set `cpu.max` and observe real `cpu.stat` throttling deltas.
+
+### Scope Note
+
+Phase 26 studies CPU bandwidth only. It does not change Phase 25 memory limits,
+combine all isolation mechanisms in one launcher, or run the production proxy
+inside the final namespace+cgroup environment. The Python isolation launcher is
+Phase 27.
+
+### Next Phase
+
+Phase 27 — Python isolation launcher combining namespaces and cgroups.

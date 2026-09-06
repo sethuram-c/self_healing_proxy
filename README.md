@@ -22,12 +22,14 @@ The project currently includes:
 - Unit, integration, stress, and ASan/UBSan test targets
 - Linux namespace inspection plus PID/mount isolation experiments
 - Disposable network-namespace + veth isolation lab
+- cgroups v2 membership and resource-accounting lab
+- cgroup memory limits with controlled OOM verification
+- cgroup CPU quotas with scheduler-throttling verification
 
 ## Planned later stages
 
 The roadmap later adds:
 
-- cgroups v2 resource isolation
 - Unix-domain-socket IPC
 - OpenTelemetry metrics and traces
 - Watchdog/supervisor-based self-healing
@@ -203,3 +205,38 @@ git status --short
 ```
 
 Phase 25 intentionally does not set `cpu.max`; CPU quota/throttling is Phase 26.
+
+## Phase 26 CPU quota and throttling lab
+
+Phase 26 studies the cgroup v2 CPU controller independently from memory/OOM.
+A dedicated CPU-burn worker starts SIGSTOP-paused, is moved into a disposable
+cgroup, and resumes only after `cpu.max` is configured. The default quota is
+`20000 100000`, meaning roughly 20 ms of CPU time is available per 100 ms
+period on one CPU's worth of capacity.
+
+```bash
+make build/cpu_pressure
+scripts/cgroup_cpu_lab.sh help
+sudo scripts/cgroup_cpu_lab.sh setup
+sudo scripts/cgroup_cpu_lab.sh status
+sudo scripts/cgroup_cpu_lab.sh verify
+sudo scripts/cgroup_cpu_lab.sh cleanup
+```
+
+The verifier samples `cpu.stat` over a fixed window and requires positive
+deltas for `usage_usec`, `nr_periods`, `nr_throttled`, and `throttled_usec`.
+It also requires the worker to remain alive, demonstrating throttling rather
+than termination.
+
+Required Fedora gate:
+
+```bash
+make phase26-gate
+git diff --check
+git status --short
+```
+
+A normal unprivileged regression may skip the real cgroup operation. That skip
+is not Phase 26 completion; the sudo-backed test must observe real throttling.
+Phase 26 intentionally does not change `memory.max` or implement the Python
+isolation launcher; those are separate milestones.
