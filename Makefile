@@ -16,6 +16,7 @@ MEMORY_PRESSURE := build/memory_pressure
 CGROUP_MEMORY_LAB := scripts/cgroup_memory_lab.sh
 CPU_PRESSURE := build/cpu_pressure
 CGROUP_CPU_LAB := scripts/cgroup_cpu_lab.sh
+ISOLATION_LAUNCHER := control-plane/isolation_launcher.py
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
 NONBLOCKING_TEST := build/test_nonblocking
@@ -47,6 +48,9 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	cgroup-cpu-lab \
 	test-cgroup-cpu \
 	phase26-gate \
+	isolation-launcher \
+	test-isolation-launcher \
+	phase27-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -246,6 +250,13 @@ cgroup-cpu-lab: $(CPU_PRESSURE)
 	@echo "  sudo $(CGROUP_CPU_LAB) verify"
 	@echo "  sudo $(CGROUP_CPU_LAB) cleanup"
 
+isolation-launcher:
+	@echo "Phase 27 composed isolation launcher commands require root; use:"
+	@echo "  sudo python3 $(ISOLATION_LAUNCHER) start -- /usr/bin/sleep 300"
+	@echo "  sudo python3 $(ISOLATION_LAUNCHER) status"
+	@echo "  sudo python3 $(ISOLATION_LAUNCHER) verify"
+	@echo "  sudo python3 $(ISOLATION_LAUNCHER) cleanup"
+
 tcp-listener: $(TCP_LISTENER)
 	./$(TCP_LISTENER)
 
@@ -305,6 +316,7 @@ test-integration: \
 	python3 tests/integration/test_cgroup_v2.py
 	python3 tests/integration/test_cgroup_memory_oom.py
 	python3 tests/integration/test_cgroup_cpu_throttle.py
+	python3 tests/integration/test_isolation_launcher.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -472,6 +484,16 @@ phase26-gate: $(CPU_PRESSURE)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 26 gate passed: cpu.max throttling, cpu.stat evidence, and regressions completed."
+
+test-isolation-launcher:
+	python3 tests/integration/test_isolation_launcher.py
+
+phase27-gate:
+	python3 tests/integration/test_isolation_launcher.py
+	sudo env PHASE27_REQUIRE_REAL=1 python3 tests/integration/test_isolation_launcher.py
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 27 gate passed: composed namespace+cgroup launcher plus regressions completed."
 
 clean:
 	rm -rf build

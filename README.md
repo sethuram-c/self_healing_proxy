@@ -240,3 +240,56 @@ A normal unprivileged regression may skip the real cgroup operation. That skip
 is not Phase 26 completion; the sudo-backed test must observe real throttling.
 Phase 26 intentionally does not change `memory.max` or implement the Python
 isolation launcher; those are separate milestones.
+
+## Phase 27 Python isolation launcher
+
+Phase 27 composes the Stage 3 primitives already verified independently. The
+Python launcher creates a disposable cgroup v2 leaf with CPU, memory, and PID
+ceilings, creates one named network namespace connected to the host by a veth
+pair, starts the requested command SIGSTOP-paused, moves it into the cgroup,
+and only then resumes it inside the network namespace.
+
+Default isolation model:
+
+```text
+host network namespace
+  p27host0 = 10.227.0.1/30
+        |
+       veth
+        |
+shp27-edge network namespace
+  p27ns0   = 10.227.0.2/30
+  workload process
+        |
+        +-- cgroup /shp27-launch
+              cpu.max    = 50000 100000
+              memory.max = 64 MiB
+              pids.max   = 32
+```
+
+Run a disposable workload:
+
+```bash
+python3 control-plane/isolation_launcher.py --help
+sudo python3 control-plane/isolation_launcher.py start -- /usr/bin/sleep 300
+sudo python3 control-plane/isolation_launcher.py status
+sudo python3 control-plane/isolation_launcher.py verify
+sudo python3 control-plane/isolation_launcher.py cleanup
+```
+
+The launcher deliberately provides only host<->namespace connectivity; it does
+not configure NAT or Internet access. Phase 28 owns cleanup/security hardening
+and production-facing policy.
+
+Required Fedora gate:
+
+```bash
+make phase27-gate
+git diff --check
+git status --short
+```
+
+A normal unprivileged regression may skip the real launcher integration. That
+skip is not Phase 27 completion; the sudo-backed test must prove the workload is
+simultaneously in the expected cgroup and network namespace and that the veth
+path is reachable in both directions.

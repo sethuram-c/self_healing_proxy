@@ -1141,7 +1141,7 @@ Phase 26 — CPU quotas and throttling with `cpu.max` and `cpu.stat`.
 
 ## Phase 26 — CPU Quotas and Throttling
 
-Status: IN PROGRESS
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -1201,23 +1201,23 @@ cpu_pressure remains alive while the scheduler throttles it.
 
 ### Quality Gate
 
-- Phase 25 memory/OOM gate genuinely verified: PENDING USER CONFIRMATION
-- strict `cpu_pressure.c` compilation: PENDING LOCAL FEDORA RUN
-- CPU-pressure CLI/unit tests: PENDING LOCAL FEDORA RUN
-- CPU controller available to disposable child cgroup: PENDING LOCAL FEDORA RUN
-- `cpu.max` equals `20000 100000`: PENDING LOCAL FEDORA RUN
-- worker enters cgroup before SIGCONT: PENDING LOCAL FEDORA RUN
-- `/proc/<PID>/cgroup` matches Phase 26 leaf: PENDING LOCAL FEDORA RUN
-- `cpu.stat usage_usec` increases during sample: PENDING LOCAL FEDORA RUN
-- `cpu.stat nr_periods` increases during sample: PENDING LOCAL FEDORA RUN
-- `cpu.stat nr_throttled` increases during sample: PENDING LOCAL FEDORA RUN
-- `cpu.stat throttled_usec` increases during sample: PENDING LOCAL FEDORA RUN
-- worker remains alive after throttling sample: PENDING LOCAL FEDORA RUN
-- duplicate setup rejected: PENDING LOCAL FEDORA RUN
-- cleanup succeeds twice and leaves no Phase 26 cgroup: PENDING LOCAL FEDORA RUN
-- `make test`: PENDING LOCAL FEDORA RUN
-- `make sanitize`: PENDING LOCAL FEDORA RUN
-- `git diff --check`: PENDING LOCAL FEDORA RUN
+- Phase 25 memory/OOM gate genuinely verified: PASS
+- strict `cpu_pressure.c` compilation: PASS
+- CPU-pressure CLI/unit tests: PASS
+- CPU controller available to disposable child cgroup: PASS
+- `cpu.max` equals `20000 100000`: PASS
+- worker enters cgroup before SIGCONT: PASS
+- `/proc/<PID>/cgroup` matches Phase 26 leaf: PASS (required-real integration)
+- `cpu.stat usage_usec` increases during sample: PASS
+- `cpu.stat nr_periods` increases during sample: PASS
+- `cpu.stat nr_throttled` increases during sample: PASS
+- `cpu.stat throttled_usec` increases during sample: PASS
+- worker remains alive after throttling sample: PASS
+- duplicate setup rejected: PASS
+- cleanup succeeds twice and leaves no Phase 26 cgroup: PASS
+- `make test`: PASS
+- `make sanitize`: PASS
+- `git diff --check`: PASS / verify again before Phase 27 commit
 
 An unprivileged skip is not Phase 26 completion. The Fedora sudo-backed gate must
 actually set `cpu.max` and observe real `cpu.stat` throttling deltas.
@@ -1232,3 +1232,98 @@ Phase 27.
 ### Next Phase
 
 Phase 27 — Python isolation launcher combining namespaces and cgroups.
+
+## Phase 27 — Python Isolation Launcher
+
+Status: IN PROGRESS
+
+### Concepts Learned
+
+- Namespace isolation and cgroup resource control are complementary mechanisms and can be composed around one workload
+- A launcher must establish resource/network boundaries before allowing the workload to execute
+- The Phase 27 handoff uses SIGSTOP/SIGCONT so the child cannot run before cgroup membership is established
+- Cgroup membership is verified independently through both `cgroup.procs` and `/proc/<pid>/cgroup`
+- Network-namespace membership is verified through `/proc/<pid>/ns/net` and compared with both the host and named namespace identities
+- A veth pair can provide a narrow host-to-sandbox control/data path without giving the sandbox a default route or Internet access
+- `cpu.max`, `memory.max`, and `pids.max` can be installed together once each controller has already been understood independently
+- Cleanup must terminate only the launcher-owned process, reject unknown cgroup occupants, remove kernel objects in a safe order, and remain idempotent
+- Phase 27 is composition/orchestration, not yet production security hardening
+
+### Implementation
+
+- `control-plane/isolation_launcher.py`
+  - `start -- <command>` creates one cgroup v2 leaf and one named network namespace
+  - configures a host<->namespace veth pair using `10.227.0.0/30` by default
+  - sets `cpu.max = 50000 100000`, `memory.max = 64 MiB`, and `pids.max = 32`
+  - starts a shell wrapper SIGSTOP-paused, writes the PID into `cgroup.procs`, persists state under `/run`, then sends SIGCONT
+  - `verify` cross-checks cgroup membership, network namespace identity, resource controls, interface addresses, and bidirectional ping
+  - `status` exposes state, workload identity, cgroup accounting/control files, namespace addresses, and workload log
+  - `cleanup` terminates only the recorded process group, refuses unknown remaining cgroup tasks, removes veth/netns/cgroup objects, and succeeds idempotently
+- `tests/integration/test_isolation_launcher.py`
+  - help contract
+  - unsafe-name rejection before privileged changes
+  - command requirement
+  - unique root-backed namespace/cgroup/interface names
+  - duplicate start rejection
+  - `/proc/<pid>/cgroup` and `/proc/<pid>/ns/net` verification
+  - CPU/memory/PID limit verification
+  - host-to-namespace and namespace-to-host reachability
+  - cleanup and second-cleanup verification
+- `make phase27-gate` requires the real composed launcher test and then reruns the complete regression/sanitizer suites
+
+### Default Isolation Model
+
+```text
+host network namespace
+  |
+  +-- p27host0 10.227.0.1/30
+           |
+           +========== veth =========+
+                                      |
+                              shp27-edge netns
+                                p27ns0 10.227.0.2/30
+                                      |
+                                      +-- workload PID
+                                             |
+                                             +-- /shp27-launch cgroup
+                                                  cpu.max    50000 100000
+                                                  memory.max 67108864
+                                                  pids.max   32
+```
+
+### Quality Gate
+
+- Phase 26 cpu.max throttling gate genuinely verified: PASS
+- launcher help/validation contracts: PENDING LOCAL FEDORA RUN
+- disposable network namespace created: PENDING LOCAL FEDORA RUN
+- host/namespace veth configured and UP: PENDING LOCAL FEDORA RUN
+- disposable cgroup v2 leaf created: PENDING LOCAL FEDORA RUN
+- `cpu.max` equals `50000 100000`: PENDING LOCAL FEDORA RUN
+- `memory.max` equals 64 MiB: PENDING LOCAL FEDORA RUN
+- `pids.max` equals 32: PENDING LOCAL FEDORA RUN
+- workload starts SIGSTOP-paused: PENDING LOCAL FEDORA RUN
+- workload enters cgroup before SIGCONT: PENDING LOCAL FEDORA RUN
+- `/proc/<pid>/cgroup` matches Phase 27 leaf: PENDING LOCAL FEDORA RUN
+- workload network namespace differs from host: PENDING LOCAL FEDORA RUN
+- workload netns identity matches named Phase 27 namespace: PENDING LOCAL FEDORA RUN
+- host -> namespace ping: PENDING LOCAL FEDORA RUN
+- namespace -> host ping: PENDING LOCAL FEDORA RUN
+- duplicate start rejected: PENDING LOCAL FEDORA RUN
+- cleanup succeeds twice and leaves no Phase 27 kernel objects: PENDING LOCAL FEDORA RUN
+- `make test`: PENDING LOCAL FEDORA RUN
+- `make sanitize`: PENDING LOCAL FEDORA RUN
+- `git diff --check`: PENDING LOCAL FEDORA RUN
+
+An unprivileged skip is not Phase 27 completion. The Fedora sudo-backed gate must
+prove that one live workload is simultaneously inside the expected network
+namespace and cgroup with all configured limits visible from the kernel.
+
+### Scope Note
+
+Phase 27 composes isolation primitives into one launcher. It intentionally does
+not yet drop capabilities, add seccomp, design crash-safe garbage collection, or
+harden stale-state recovery. Those cleanup/security concerns are Phase 28.
+
+### Next Phase
+
+Phase 28 — isolation cleanup, stale-state recovery, and security hardening.
