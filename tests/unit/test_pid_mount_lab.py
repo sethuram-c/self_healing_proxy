@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Phase 22: deterministic CLI checks and gated kernel-isolation exercise."""
+import os
 import pathlib
 import re
 import subprocess
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-BIN = ROOT / "build" / "pid_mount_lab"
+BIN = pathlib.Path(os.environ.get("PID_MOUNT_LAB_BIN", ROOT / "build" / "pid_mount_lab"))
 
 
 class PidMountLabTests(unittest.TestCase):

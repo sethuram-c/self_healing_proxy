@@ -51,6 +51,9 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	isolation-launcher \
 	test-isolation-launcher \
 	phase27-gate \
+	test-stage3-hardening \
+	phase28-gate \
+	stage3-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -65,6 +68,7 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	sanitize-nonblocking \
 	sanitize-backend-pool \
 	sanitize-http \
+	sanitize-pid-mount \
 	sanitize-memory-pressure \
 	sanitize-cpu-pressure \
 	sanitize-tcp \
@@ -317,6 +321,7 @@ test-integration: \
 	python3 tests/integration/test_cgroup_memory_oom.py
 	python3 tests/integration/test_cgroup_cpu_throttle.py
 	python3 tests/integration/test_isolation_launcher.py
+	python3 tests/integration/test_stage3_hardening.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -372,6 +377,11 @@ sanitize-http:
 		src/http_framing.c \
 		-o build/test_http_framing-sanitized
 	./build/test_http_framing-sanitized
+
+sanitize-pid-mount:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) src/pid_mount_lab.c -o build/pid_mount_lab-sanitized
+	PID_MOUNT_LAB_BIN=build/pid_mount_lab-sanitized python3 tests/unit/test_pid_mount_lab.py
 
 sanitize-memory-pressure:
 	mkdir -p build
@@ -431,6 +441,7 @@ sanitize: \
 	sanitize-nonblocking \
 	sanitize-backend-pool \
 	sanitize-http \
+	sanitize-pid-mount \
 	sanitize-memory-pressure \
 	sanitize-cpu-pressure \
 	sanitize-tcp \
@@ -494,6 +505,31 @@ phase27-gate:
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 27 gate passed: composed namespace+cgroup launcher plus regressions completed."
+
+
+test-stage3-hardening:
+	python3 tests/integration/test_stage3_hardening.py
+
+phase28-gate:
+	python3 tests/integration/test_stage3_hardening.py
+	sudo env PHASE28_REQUIRE_REAL=1 python3 tests/integration/test_stage3_hardening.py
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 28 gate passed: hardened PID/mount/net/cgroup isolation, privilege drop, stale recovery, and regressions completed."
+
+stage3-gate: $(NAMESPACE_INSPECT) $(PID_MOUNT_LAB) $(MEMORY_PRESSURE) $(CPU_PRESSURE)
+	python3 tests/unit/test_namespace_inspect.py
+	python3 tests/unit/test_pid_mount_lab.py
+	sudo env PHASE23_REQUIRE_REAL=1 python3 tests/integration/test_netns_veth.py
+	sudo env PHASE24_REQUIRE_REAL=1 python3 tests/integration/test_cgroup_v2.py
+	sudo env PHASE25_REQUIRE_REAL=1 python3 tests/integration/test_cgroup_memory_oom.py
+	sudo env PHASE26_REQUIRE_REAL=1 python3 tests/integration/test_cgroup_cpu_throttle.py
+	sudo env PHASE27_REQUIRE_REAL=1 python3 tests/integration/test_isolation_launcher.py
+	sudo env PHASE28_REQUIRE_REAL=1 python3 tests/integration/test_stage3_hardening.py
+	$(MAKE) test
+	$(MAKE) sanitize
+	sudo python3 control-plane/isolation_launcher.py doctor | grep -q '^INSTANCE_STATE=CLEAN$$'
+	@echo "Stage 3 gate passed: Linux namespace isolation, cgroup controls, hardened launcher, stale recovery, regressions, and sanitizers completed."
 
 clean:
 	rm -rf build

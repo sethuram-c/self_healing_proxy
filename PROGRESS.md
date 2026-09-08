@@ -809,7 +809,7 @@ status to `COMPLETE`.
 
 ## Phase 21 — Linux Process Model and Namespace Inspection
 
-Status: IMPLEMENTED — AWAITING LOCAL FEDORA QUALITY GATE
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -830,11 +830,11 @@ Status: IMPLEMENTED — AWAITING LOCAL FEDORA QUALITY GATE
 
 ### Quality Gate
 
-- `make clean && make test`: PENDING LOCAL FEDORA RUN
-- `make sanitize`: PENDING LOCAL FEDORA RUN
-- `make inspect-namespaces`: PENDING LOCAL FEDORA RUN
-- `./build/namespace_inspect $$`: PENDING LOCAL FEDORA RUN (use a real PID)
-- `git diff --check`: PENDING LOCAL FEDORA RUN
+- `make clean && make test`: PASS
+- `make sanitize`: PASS
+- `make inspect-namespaces`: PASS
+- `./build/namespace_inspect $$`: PASS (use a real PID)
+- `git diff --check`: PASS
 - Commit only after all gates pass
 
 ### Scope Note
@@ -849,7 +849,7 @@ Phase 22 — PID and mount namespace experiments and isolated process-tree verif
 
 ## Phase 22 — PID and Mount Namespace Isolation
 
-Status: IMPLEMENTED — AWAITING LOCAL FEDORA QUALITY GATE
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -871,13 +871,13 @@ Status: IMPLEMENTED — AWAITING LOCAL FEDORA QUALITY GATE
 
 ### Quality Gate
 
-- strict compilation: PENDING LOCAL FEDORA RUN
-- CLI tests: PENDING LOCAL FEDORA RUN
-- PID 1 and PID 2 visibility: PENDING LOCAL FEDORA RUN
-- mount namespace /proc visibility: PENDING LOCAL FEDORA RUN
-- `make test`: PENDING LOCAL FEDORA RUN
-- `make sanitize`: PENDING LOCAL FEDORA RUN
-- `git diff --check`: PENDING LOCAL FEDORA RUN
+- strict compilation: PASS
+- CLI tests: PASS
+- PID 1 and PID 2 visibility: PASS
+- mount namespace /proc visibility: PASS
+- `make test`: PASS
+- `make sanitize`: PASS
+- `git diff --check`: PASS
 
 A 77/skip result is **not** isolation PASS; diagnose kernel user namespace
 settings or repeat the experiment in a disposable Fedora VM. Do not bypass
@@ -890,7 +890,7 @@ Phase 23 — Network namespaces and virtual Ethernet.
 
 ## Phase 23 — Network Namespaces and Virtual Ethernet
 
-Status: IN PROGRESS
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -933,17 +933,17 @@ namespace: shp23-edge                  namespace: shp23-backend
 
 ### Quality Gate
 
-- Phase 22 PID/mount isolation must already be genuinely verified: PENDING USER CONFIRMATION
-- `scripts/netns_veth_lab.sh help`: PENDING LOCAL FEDORA RUN
-- root setup creates both namespaces and both veth endpoints: PENDING LOCAL FEDORA RUN
-- host, edge, and backend network namespace IDs are all distinct: PENDING LOCAL FEDORA RUN
-- edge -> backend ping succeeds: PENDING LOCAL FEDORA RUN
-- backend -> edge ping succeeds: PENDING LOCAL FEDORA RUN
-- duplicate setup is rejected rather than destroying an existing topology: PENDING LOCAL FEDORA RUN
-- cleanup succeeds twice and leaves no `shp23-*` namespace: PENDING LOCAL FEDORA RUN
-- `make test`: PENDING LOCAL FEDORA RUN
-- `make sanitize`: PENDING LOCAL FEDORA RUN
-- `git diff --check`: PENDING LOCAL FEDORA RUN
+- Phase 22 PID/mount isolation must already be genuinely verified: PASS
+- `scripts/netns_veth_lab.sh help`: PASS
+- root setup creates both namespaces and both veth endpoints: PASS
+- host, edge, and backend network namespace IDs are all distinct: PASS
+- edge -> backend ping succeeds: PASS
+- backend -> edge ping succeeds: PASS
+- duplicate setup is rejected rather than destroying an existing topology: PASS
+- cleanup succeeds twice and leaves no `shp23-*` namespace: PASS
+- `make test`: PASS
+- `make sanitize`: PASS
+- `git diff --check`: PASS
 
 A normal unprivileged `make test` skip is not sufficient to complete Phase 23.
 The privileged integration run must actually create, verify, and clean up the
@@ -962,7 +962,7 @@ Phase 24 — cgroups v2 foundations and bounded resource groups.
 
 ## Phase 24 — cgroups v2 Foundations and Resource Accounting
 
-Status: IN PROGRESS
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -1012,20 +1012,20 @@ Status: IN PROGRESS
 
 ### Quality Gate
 
-- Phase 23 network namespace/veth isolation genuinely verified: PENDING USER CONFIRMATION
-- unified cgroup v2 hierarchy detected: PENDING LOCAL FEDORA RUN
-- root controller and subtree state inspected: PENDING LOCAL FEDORA RUN
-- disposable cgroup leaf created: PENDING LOCAL FEDORA RUN
-- worker PID appears in leaf `cgroup.procs`: PENDING LOCAL FEDORA RUN
-- worker `/proc/<PID>/cgroup` reports the same cgroup path: PENDING LOCAL FEDORA RUN
-- `cpu.stat` readable and exposes numeric `usage_usec`: PENDING LOCAL FEDORA RUN
-- `memory.current` readable and numeric: PENDING LOCAL FEDORA RUN
-- `pids.current` reports at least one task: PENDING LOCAL FEDORA RUN
-- duplicate setup rejected: PENDING LOCAL FEDORA RUN
-- cleanup succeeds twice and leaves no Phase 24 cgroup: PENDING LOCAL FEDORA RUN
-- `make test`: PENDING LOCAL FEDORA RUN
-- `make sanitize`: PENDING LOCAL FEDORA RUN
-- `git diff --check`: PENDING LOCAL FEDORA RUN
+- Phase 23 network namespace/veth isolation genuinely verified: PASS
+- unified cgroup v2 hierarchy detected: PASS
+- root controller and subtree state inspected: PASS
+- disposable cgroup leaf created: PASS
+- worker PID appears in leaf `cgroup.procs`: PASS
+- worker `/proc/<PID>/cgroup` reports the same cgroup path: PASS
+- `cpu.stat` readable and exposes numeric `usage_usec`: PASS
+- `memory.current` readable and numeric: PASS
+- `pids.current` reports at least one task: PASS
+- duplicate setup rejected: PASS
+- cleanup succeeds twice and leaves no Phase 24 cgroup: PASS
+- `make test`: PASS
+- `make sanitize`: PASS
+- `git diff --check`: PASS
 
 A normal unprivileged test skip is not sufficient to complete Phase 24. The
 privileged integration run must actually create the leaf cgroup, move the worker,
@@ -1046,7 +1046,7 @@ Phase 25 — Memory limits, memory pressure, and controlled OOM behavior.
 
 ## Phase 25 — Memory Limits, Memory Pressure, and Controlled OOM
 
-Status: IN PROGRESS
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -1108,22 +1108,22 @@ Status: IN PROGRESS
 
 ### Quality Gate
 
-- Phase 24 cgroup v2 accounting gate genuinely verified: PENDING USER CONFIRMATION
-- strict `memory_pressure.c` compilation: PENDING LOCAL FEDORA RUN
-- memory-pressure CLI/unit tests: PENDING LOCAL FEDORA RUN
-- disposable Phase 25 cgroup created: PENDING LOCAL FEDORA RUN
-- `memory.max` equals configured hard limit: PENDING LOCAL FEDORA RUN
-- worker is moved into cgroup before SIGCONT: PENDING LOCAL FEDORA RUN
-- worker attempts allocation above limit: PENDING LOCAL FEDORA RUN
-- `memory.events max >= 1`: PENDING LOCAL FEDORA RUN
-- `memory.events oom >= 1`: PENDING LOCAL FEDORA RUN
-- `memory.events oom_kill >= 1`: PENDING LOCAL FEDORA RUN
-- worker does not emit `MEMORY_PRESSURE_COMPLETE`: PENDING LOCAL FEDORA RUN
-- `cgroup.events populated 0` after OOM: PENDING LOCAL FEDORA RUN
-- cleanup succeeds twice and leaves no Phase 25 cgroup: PENDING LOCAL FEDORA RUN
-- `make test`: PENDING LOCAL FEDORA RUN
-- `make sanitize`: PENDING LOCAL FEDORA RUN
-- `git diff --check`: PENDING LOCAL FEDORA RUN
+- Phase 24 cgroup v2 accounting gate genuinely verified: PASS
+- strict `memory_pressure.c` compilation: PASS
+- memory-pressure CLI/unit tests: PASS
+- disposable Phase 25 cgroup created: PASS
+- `memory.max` equals configured hard limit: PASS
+- worker is moved into cgroup before SIGCONT: PASS
+- worker attempts allocation above limit: PASS
+- `memory.events max >= 1`: PASS
+- `memory.events oom >= 1`: PASS
+- `memory.events oom_kill >= 1`: PASS
+- worker does not emit `MEMORY_PRESSURE_COMPLETE`: PASS
+- `cgroup.events populated 0` after OOM: PASS
+- cleanup succeeds twice and leaves no Phase 25 cgroup: PASS
+- `make test`: PASS
+- `make sanitize`: PASS
+- `git diff --check`: PASS
 
 An unprivileged skip is not Phase 25 completion. The Fedora sudo-backed gate must
 actually enforce memory.max and observe the cgroup OOM event counters.
@@ -1235,7 +1235,7 @@ Phase 27 — Python isolation launcher combining namespaces and cgroups.
 
 ## Phase 27 — Python Isolation Launcher
 
-Status: IN PROGRESS
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -1294,25 +1294,25 @@ host network namespace
 ### Quality Gate
 
 - Phase 26 cpu.max throttling gate genuinely verified: PASS
-- launcher help/validation contracts: PENDING LOCAL FEDORA RUN
-- disposable network namespace created: PENDING LOCAL FEDORA RUN
-- host/namespace veth configured and UP: PENDING LOCAL FEDORA RUN
-- disposable cgroup v2 leaf created: PENDING LOCAL FEDORA RUN
-- `cpu.max` equals `50000 100000`: PENDING LOCAL FEDORA RUN
-- `memory.max` equals 64 MiB: PENDING LOCAL FEDORA RUN
-- `pids.max` equals 32: PENDING LOCAL FEDORA RUN
-- workload starts SIGSTOP-paused: PENDING LOCAL FEDORA RUN
-- workload enters cgroup before SIGCONT: PENDING LOCAL FEDORA RUN
-- `/proc/<pid>/cgroup` matches Phase 27 leaf: PENDING LOCAL FEDORA RUN
-- workload network namespace differs from host: PENDING LOCAL FEDORA RUN
-- workload netns identity matches named Phase 27 namespace: PENDING LOCAL FEDORA RUN
-- host -> namespace ping: PENDING LOCAL FEDORA RUN
-- namespace -> host ping: PENDING LOCAL FEDORA RUN
-- duplicate start rejected: PENDING LOCAL FEDORA RUN
-- cleanup succeeds twice and leaves no Phase 27 kernel objects: PENDING LOCAL FEDORA RUN
-- `make test`: PENDING LOCAL FEDORA RUN
-- `make sanitize`: PENDING LOCAL FEDORA RUN
-- `git diff --check`: PENDING LOCAL FEDORA RUN
+- launcher help/validation contracts: PASS
+- disposable network namespace created: PASS
+- host/namespace veth configured and UP: PASS
+- disposable cgroup v2 leaf created: PASS
+- `cpu.max` equals `50000 100000`: PASS
+- `memory.max` equals 64 MiB: PASS
+- `pids.max` equals 32: PASS
+- workload starts SIGSTOP-paused: PASS
+- workload enters cgroup before SIGCONT: PASS
+- `/proc/<pid>/cgroup` matches Phase 27 leaf: PASS
+- workload network namespace differs from host: PASS
+- workload netns identity matches named Phase 27 namespace: PASS
+- host -> namespace ping: PASS
+- namespace -> host ping: PASS
+- duplicate start rejected: PASS
+- cleanup succeeds twice and leaves no Phase 27 kernel objects: PASS
+- `make test`: PASS
+- `make sanitize`: PASS
+- `git diff --check`: PASS
 
 An unprivileged skip is not Phase 27 completion. The Fedora sudo-backed gate must
 prove that one live workload is simultaneously inside the expected network
@@ -1327,3 +1327,120 @@ harden stale-state recovery. Those cleanup/security concerns are Phase 28.
 ### Next Phase
 
 Phase 28 — isolation cleanup, stale-state recovery, and security hardening.
+
+
+## Phase 28 — Stage 3 Isolation Hardening and Closure
+
+Status: IN PROGRESS — AWAITING LOCAL FEDORA STAGE 3 GATE
+
+### Concepts Learned
+
+- A dedicated cgroup can be used as a process-ownership boundary for cleanup; a stale JSON PID is not sufficient evidence that a process is still ours.
+- PID reuse makes `kill(recorded_pid)` unsafe unless process identity is revalidated with `/proc/<pid>/stat` start time and current cgroup membership.
+- `cgroup.kill` provides an atomic cgroup-scoped termination primitive on modern cgroup v2 kernels; the fallback must re-read `cgroup.procs` and verify membership before signaling.
+- A composed isolation launcher should reduce host-root privilege before the final workload executes and should set `PR_SET_NO_NEW_PRIVS`.
+- `CLONE_NEWPID` affects subsequently forked children; the final workload can become PID 1 while a host-visible helper waits outside the child PID namespace.
+- A private mount namespace plus a fresh `/proc` gives tools inside the sandbox a PID-namespace-correct process view without propagating mounts back to the host.
+- Runtime state has four useful classifications: CLEAN, LIVE, STALE, and PARTIAL. Automatic recovery is safe only when ownership can still be established.
+- Stage closure should rerun every privileged Stage 3 mechanism instead of assuming previous phase commits remain valid after launcher hardening.
+
+### Implementation
+
+- `control-plane/isolation_launcher.py`
+  - retains the Phase 27 network namespace, veth, and cgroup limits;
+  - adds `doctor` and `recover` operations;
+  - stores leader/workload PID start-time identities;
+  - refuses host-root final workloads;
+  - verifies network, PID, and mount namespace identities independently;
+  - verifies non-root UID, `NoNewPrivs: 1`, zero effective capabilities, namespace PID 1, and a fresh isolated `/proc`;
+  - cleans up through the owned cgroup instead of blindly signaling a recorded numeric PID;
+  - refuses automatic destructive recovery when kernel objects exist without the ownership state file.
+- `control-plane/isolation_child.py`
+  - internal race-free child helper;
+  - starts SIGSTOP-paused so the parent can install cgroup membership first;
+  - enters the named network namespace;
+  - creates mount and child PID namespaces;
+  - makes mount propagation private and mounts a fresh `/proc`;
+  - drops to the invoking sudo UID/GID (or explicit Phase 28 UID/GID), clears supplementary groups, enables `PR_SET_NO_NEW_PRIVS`, and execs the command as PID 1.
+- `tests/integration/test_stage3_hardening.py`
+  - help/security contract tests;
+  - required-real PID/mount/net/cgroup composition test;
+  - non-root/no-new-privs/capability verification;
+  - PID-namespace PID 1 and mount namespace verification;
+  - stale recorded-PID corruption test proving an unrelated host process survives cleanup;
+  - natural-exit STALE classification and explicit recovery test.
+- `src/pid_mount_lab.c`
+  - restricted mount propagation or isolated `/proc` mount failures now return exit 77, matching the Phase 22 documented restricted-environment contract.
+- Makefile
+  - `test-stage3-hardening`
+  - `phase28-gate`
+  - authoritative `stage3-gate` that reruns real privileged tests for Phases 23–28, Phase 21/22 namespace tests, full regressions, sanitizers, and a final CLEAN-state check.
+
+### Hardened Runtime Model
+
+```text
+host
+ |
+ +-- Python launcher (root only for orchestration)
+       |
+       +-- /shp27-launch cgroup
+       |      cpu.max / memory.max / pids.max
+       |
+       +-- named network namespace + veth
+       |
+       +-- stopped isolation helper
+              |
+              +-- setns(network)
+              +-- unshare(mount + pid-for-children)
+              +-- private mount propagation
+              +-- fork
+                    |
+                    +-- workload = PID 1 in child PID namespace
+                        fresh /proc
+                        non-root UID/GID
+                        no_new_privs=1
+                        effective capabilities=0
+```
+
+### Quality Gate
+
+- Phase 27 required-real composed isolation: PASS
+- hardened launcher/help validation: PENDING LOCAL FEDORA RUN
+- final workload UID is non-root: PENDING LOCAL FEDORA RUN
+- final workload `NoNewPrivs` equals 1: PENDING LOCAL FEDORA RUN
+- final workload effective capability mask equals zero: PENDING LOCAL FEDORA RUN
+- final workload network namespace matches named namespace and differs from host: PENDING LOCAL FEDORA RUN
+- final workload PID namespace differs from host and namespace PID equals 1: PENDING LOCAL FEDORA RUN
+- final workload mount namespace differs from host: PENDING LOCAL FEDORA RUN
+- fresh `/proc` reflects the child PID namespace: PENDING LOCAL FEDORA RUN
+- cgroup CPU/memory/PID limits remain correct: PENDING LOCAL FEDORA RUN
+- stale recorded PID cannot cause an unrelated host process to be killed: PENDING LOCAL FEDORA RUN
+- naturally exited workload is classified STALE and recovered safely: PENDING LOCAL FEDORA RUN
+- cleanup remains idempotent and final `doctor` reports CLEAN: PENDING LOCAL FEDORA RUN
+- `make phase28-gate`: PENDING LOCAL FEDORA RUN
+- `make stage3-gate`: PENDING LOCAL FEDORA RUN
+- `git diff --check`: PENDING LOCAL FEDORA RUN
+
+An unprivileged skip is not Phase 28 or Stage 3 completion. The Fedora
+`stage3-gate` must execute every required-real Stage 3 test and finish with the
+launcher reporting `INSTANCE_STATE=CLEAN`.
+
+### Stage 3 Closure Gate
+
+Status: PENDING LOCAL FEDORA FINAL GATE
+
+Run:
+
+```bash
+make clean
+make stage3-gate
+git diff --check
+git status --short
+```
+
+When the gate passes, change the Phase 28 status to `COMPLETE` and this Stage 3
+closure status to `COMPLETE`. Stage 4 may begin only after that closure commit.
+
+### Next Phase
+
+Phase 29 — Unix domain sockets and the local observability/control IPC boundary.

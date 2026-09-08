@@ -21,6 +21,7 @@ def run_script(command: str, env: dict[str, str] | None = None) -> subprocess.Co
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        timeout=15,
         check=False,
     )
 

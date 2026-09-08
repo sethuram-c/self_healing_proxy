@@ -97,7 +97,11 @@ class IsolationLauncherTests(unittest.TestCase):
 
             duplicate = self.run_launcher("start", "--", "/usr/bin/sleep", "30", env=env)
             self.assertNotEqual(duplicate.returncode, 0)
-            self.assertIn("already exists", duplicate.stderr)
+            self.assertTrue(
+                "already exists" in duplicate.stderr
+                or "instance is LIVE" in duplicate.stderr,
+                duplicate.stderr,
+            )
 
             verify = self.run_launcher("verify", env=env)
             self.assertEqual(verify.returncode, 0, verify.stderr)
@@ -111,7 +115,9 @@ class IsolationLauncherTests(unittest.TestCase):
 
             status = self.run_launcher("status", env=env)
             self.assertEqual(status.returncode, 0, status.stderr)
-            self.assertIn("WORKLOAD_ALIVE=1", status.stdout)
+            self.assertIn("INSTANCE_STATE=LIVE", status.stdout)
+            self.assertRegex(status.stdout, r"(?m)^WORKLOAD_PID=\d+$")
+            self.assertIn("WORKLOAD_CGROUP=/" + cg_name, status.stdout)
             self.assertIn("CPU_MAX_BEGIN", status.stdout)
             self.assertIn("MEMORY_MAX_BEGIN", status.stdout)
             self.assertIn("PIDS_MAX_BEGIN", status.stdout)

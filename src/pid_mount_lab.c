@@ -62,9 +62,17 @@ static int isolated_init(void)
     }
     /* This alters mount propagation only in the new mount namespace. */
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) < 0) {
+        if (errno == EPERM || errno == EACCES || errno == EROFS) {
+            fprintf(stderr, "SKIP: private mount propagation unavailable: %s\n", strerror(errno));
+            return SKIP_EXIT;
+        }
         perror("mount private"); return 1;
     }
     if (mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL) < 0) {
+        if (errno == EPERM || errno == EACCES || errno == EROFS) {
+            fprintf(stderr, "SKIP: isolated /proc mount unavailable: %s\n", strerror(errno));
+            return SKIP_EXIT;
+        }
         perror("mount /proc"); return 1;
     }
     struct stat st;

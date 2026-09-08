@@ -293,3 +293,75 @@ A normal unprivileged regression may skip the real launcher integration. That
 skip is not Phase 27 completion; the sudo-backed test must prove the workload is
 simultaneously in the expected cgroup and network namespace and that the veth
 path is reachable in both directions.
+
+## Phase 28 Stage 3 isolation hardening and closure
+
+Phase 28 hardens the Phase 27 launcher before Stage 3 is declared complete. The
+launcher still creates the same cgroup v2 leaf and host-to-namespace veth path,
+but the final workload now also runs in a distinct PID namespace and mount
+namespace with a fresh `/proc`, drops host-root privilege to the invoking sudo
+user (or an explicit non-root UID/GID), clears supplementary groups, and enables
+`PR_SET_NO_NEW_PRIVS` before `exec`.
+
+The launcher now exposes two lifecycle-diagnostic commands:
+
+```bash
+sudo python3 control-plane/isolation_launcher.py doctor
+sudo python3 control-plane/isolation_launcher.py recover
+```
+
+`doctor` classifies the instance as `CLEAN`, `LIVE`, `STALE`, or `PARTIAL`.
+`recover` is intentionally limited to owned stale state; it refuses automatic
+destructive recovery when kernel objects exist without the ownership state
+file.
+
+Run a hardened disposable workload:
+
+```bash
+sudo python3 control-plane/isolation_launcher.py start -- /usr/bin/sleep 300
+sudo python3 control-plane/isolation_launcher.py status
+sudo python3 control-plane/isolation_launcher.py verify
+sudo python3 control-plane/isolation_launcher.py doctor
+sudo python3 control-plane/isolation_launcher.py cleanup
+```
+
+`verify` checks all of the following from kernel state rather than from the JSON
+bookkeeping file alone:
+
+- exact cgroup v2 membership and CPU/memory/PID ceilings;
+- network namespace identity and bidirectional veth reachability;
+- a PID namespace distinct from the host with the workload visible as namespace PID 1;
+- a mount namespace distinct from the host and a fresh `/proc` for that PID namespace;
+- non-root real/effective UID;
+- `NoNewPrivs: 1`;
+- zero effective Linux capabilities.
+
+Cleanup no longer signals a numeric PID merely because that number is present
+in saved state. Modern kernels use the owned cgroup's `cgroup.kill`; the fallback
+re-reads `cgroup.procs` and verifies exact cgroup membership before signaling.
+This prevents stale PID state or PID reuse from targeting an unrelated host
+process.
+
+The Phase 28 gate is:
+
+```bash
+make phase28-gate
+```
+
+The authoritative Stage 3 closure gate is:
+
+```bash
+make clean
+make stage3-gate
+git diff --check
+git status --short
+```
+
+`stage3-gate` reruns the namespace inspection/PID-mount checks, every real
+privileged Phase 23-28 integration test, the complete regression suite, the
+sanitizer suite, and a final launcher `doctor` check that must report
+`INSTANCE_STATE=CLEAN`.
+
+A skipped privileged test is not Stage 3 completion. Stage 4 should begin only
+after the Fedora Stage 3 gate succeeds and the Phase 28/Stage 3 statuses in
+`PROGRESS.md` are changed to `COMPLETE`.

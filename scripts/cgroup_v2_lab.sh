@@ -126,7 +126,11 @@ setup_lab() {
     }
     trap cleanup_on_error ERR INT TERM
 
-    sleep "$WORKER_SECONDS" &
+    # Detach the long-lived worker from the setup command's stdio.
+    # Integration tests capture setup stdout/stderr with pipes; if the
+    # background sleep inherits those descriptors, subprocess.run() waits
+    # for the sleep process to exit before it observes EOF.
+    sleep "$WORKER_SECONDS" </dev/null >/dev/null 2>&1 &
     pid=$!
 
     if ! printf '%s\n' "$pid" > "$CGROUP_PATH/cgroup.procs"; then
