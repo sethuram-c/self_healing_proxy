@@ -365,3 +365,41 @@ sanitizer suite, and a final launcher `doctor` check that must report
 A skipped privileged test is not Stage 3 completion. Stage 4 should begin only
 after the Fedora Stage 3 gate succeeds and the Phase 28/Stage 3 statuses in
 `PROGRESS.md` are changed to `COMPLETE`.
+
+## Phase 29 Unix domain sockets and the local IPC boundary
+
+Stage 4 begins with a deliberately small local transport layer before any
+telemetry schema or framing is introduced. Phase 29 adds reusable C helpers for
+filesystem-backed `AF_UNIX` / `SOCK_STREAM` endpoints and a blocking lab server
+that demonstrates the lifecycle rules the later observability path depends on.
+
+Build and run the lab server:
+
+```bash
+make build/uds_server build/test_uds
+./build/test_uds
+./build/uds_server --socket /tmp/self-healing-proxy-phase29.sock
+```
+
+From another shell, connect with Python or `socat` and send arbitrary bytes. The
+server echoes the byte stream and logs kernel-supplied peer PID/UID/GID using
+Linux `SO_PEERCRED`.
+
+The endpoint is created mode `0600`. Startup refuses to overwrite a regular
+file, refuses a socket pathname that still has a live listener, and only removes
+a socket inode when a connection probe establishes that the prior listener is
+stale. SIGINT/SIGTERM closes the listener and removes the owned pathname.
+
+Automated tests:
+
+```bash
+make test-uds
+make sanitize-uds
+make phase29-gate
+```
+
+The Phase 29 server is intentionally blocking and the payload is intentionally
+unframed. `SOCK_STREAM` is a byte stream: application messages are not preserved
+by `send()` boundaries. Phase 30 adds bounded framing; Phase 31 makes the
+telemetry delivery path nonblocking. The production proxy core is not modified
+in Phase 29.

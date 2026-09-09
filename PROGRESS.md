@@ -1331,7 +1331,7 @@ Phase 28 — isolation cleanup, stale-state recovery, and security hardening.
 
 ## Phase 28 — Stage 3 Isolation Hardening and Closure
 
-Status: IN PROGRESS — AWAITING LOCAL FEDORA STAGE 3 GATE
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -1405,21 +1405,21 @@ host
 ### Quality Gate
 
 - Phase 27 required-real composed isolation: PASS
-- hardened launcher/help validation: PENDING LOCAL FEDORA RUN
-- final workload UID is non-root: PENDING LOCAL FEDORA RUN
-- final workload `NoNewPrivs` equals 1: PENDING LOCAL FEDORA RUN
-- final workload effective capability mask equals zero: PENDING LOCAL FEDORA RUN
-- final workload network namespace matches named namespace and differs from host: PENDING LOCAL FEDORA RUN
-- final workload PID namespace differs from host and namespace PID equals 1: PENDING LOCAL FEDORA RUN
-- final workload mount namespace differs from host: PENDING LOCAL FEDORA RUN
-- fresh `/proc` reflects the child PID namespace: PENDING LOCAL FEDORA RUN
-- cgroup CPU/memory/PID limits remain correct: PENDING LOCAL FEDORA RUN
-- stale recorded PID cannot cause an unrelated host process to be killed: PENDING LOCAL FEDORA RUN
-- naturally exited workload is classified STALE and recovered safely: PENDING LOCAL FEDORA RUN
-- cleanup remains idempotent and final `doctor` reports CLEAN: PENDING LOCAL FEDORA RUN
-- `make phase28-gate`: PENDING LOCAL FEDORA RUN
-- `make stage3-gate`: PENDING LOCAL FEDORA RUN
-- `git diff --check`: PENDING LOCAL FEDORA RUN
+- hardened launcher/help validation: PASS
+- final workload UID is non-root: PASS
+- final workload `NoNewPrivs` equals 1: PASS
+- final workload effective capability mask equals zero: PASS
+- final workload network namespace matches named namespace and differs from host: PASS
+- final workload PID namespace differs from host and namespace PID equals 1: PASS
+- final workload mount namespace differs from host: PASS
+- fresh `/proc` reflects the child PID namespace: PASS
+- cgroup CPU/memory/PID limits remain correct: PASS
+- stale recorded PID cannot cause an unrelated host process to be killed: PASS
+- naturally exited workload is classified STALE and recovered safely: PASS
+- cleanup remains idempotent and final `doctor` reports CLEAN: PASS
+- `make phase28-gate`: PASS
+- `make stage3-gate`: PASS
+- `git diff --check`: PASS
 
 An unprivileged skip is not Phase 28 or Stage 3 completion. The Fedora
 `stage3-gate` must execute every required-real Stage 3 test and finish with the
@@ -1427,7 +1427,7 @@ launcher reporting `INSTANCE_STATE=CLEAN`.
 
 ### Stage 3 Closure Gate
 
-Status: PENDING LOCAL FEDORA FINAL GATE
+Status: COMPLETE
 
 Run:
 
@@ -1438,9 +1438,98 @@ git diff --check
 git status --short
 ```
 
-When the gate passes, change the Phase 28 status to `COMPLETE` and this Stage 3
-closure status to `COMPLETE`. Stage 4 may begin only after that closure commit.
+The authoritative Fedora closure gate passed with all required-real Phase 23-28
+checks, the full regression suite, the sanitizer suite, and a final CLEAN-state
+launcher check. Stage 3 is closed.
 
 ### Next Phase
 
 Phase 29 — Unix domain sockets and the local observability/control IPC boundary.
+
+
+## Phase 29 — Unix Domain Sockets and the Local IPC Boundary
+
+Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+
+### Concepts Learned
+
+- `AF_UNIX` provides local inter-process communication without IP routing, ports, or a network stack hop.
+- `SOCK_STREAM` still provides a byte stream, not message boundaries. One `send()` is not one application message; framing belongs above the transport and is intentionally deferred to Phase 30.
+- Filesystem Unix sockets have pathname lifecycle concerns that TCP listeners do not: a crashed process can leave a stale socket inode behind.
+- Startup must never blindly `unlink()` an arbitrary pre-existing pathname. A regular file at the configured socket path is evidence of a collision and must be preserved.
+- A live Unix socket pathname and a stale Unix socket pathname are distinguished by connection behavior, not by `S_ISSOCK` alone.
+- The socket inode's filesystem mode is part of the local trust boundary. Phase 29 uses `0600` so only the owning user can open the endpoint through normal DAC checks.
+- Linux `SO_PEERCRED` lets the accepting process inspect the connected peer's PID, UID, and GID using kernel-provided credentials rather than trusting application payload fields.
+- `SOCK_CLOEXEC` / `accept4(..., SOCK_CLOEXEC)` prevent unintended descriptor inheritance across `execve()`.
+- Graceful server shutdown must close the listener and remove only the Unix socket inode it owns.
+
+### Implementation
+
+- `include/uds.h`
+  - reusable Unix-domain stream API for listener creation, client connection, peer credential retrieval, and safe pathname cleanup.
+- `src/uds.c`
+  - validates `sockaddr_un.sun_path` length;
+  - opens `AF_UNIX/SOCK_STREAM|SOCK_CLOEXEC` sockets;
+  - refuses to delete non-socket path collisions;
+  - probes an existing socket pathname and refuses a live listener;
+  - removes only a stale socket inode whose connect probe returns a stale-listener condition;
+  - binds, applies mode `0600`, listens, connects, accepts with `SOCK_CLOEXEC`, and exposes Linux `SO_PEERCRED`.
+- `src/uds_server.c`
+  - deliberately blocking Phase 29 lab server;
+  - accepts sequential local clients and prints kernel peer credentials;
+  - echoes the raw byte stream without defining application message boundaries;
+  - handles partial sends and `EINTR`;
+  - ignores `SIGPIPE` and exits cleanly on SIGINT/SIGTERM;
+  - removes the owned socket pathname on shutdown.
+- `tests/unit/test_uds.c`
+  - exercises the reusable C listener/connect/accept helpers with a forked local peer;
+  - verifies `0600`, socket file type, peer PID/UID/GID, bidirectional bytes, and cleanup.
+- `tests/integration/test_uds_server.py`
+  - help and invalid CLI checks;
+  - overlong `sun_path` rejection;
+  - preservation of a regular-file collision;
+  - readiness based on a successful connection, not pathname existence alone;
+  - raw stream echo across deliberately split writes;
+  - sequential-client behavior;
+  - live-listener duplicate-start rejection;
+  - kernel peer UID/GID evidence;
+  - stale-socket recovery;
+  - SIGTERM cleanup and pathname removal.
+
+### Phase Boundary
+
+Phase 29 proves only the local transport and lifecycle contract. It intentionally
+stays blocking and intentionally treats the payload as an unstructured byte
+stream. It does not yet add length prefixes, message types, JSON/telemetry
+schemas, proxy integration, queueing, or nonblocking delivery.
+
+Those belong to:
+
+```text
+Phase 30 -> framed IPC protocol
+Phase 31 -> nonblocking telemetry path
+```
+
+### Quality Gate
+
+- strict C11 `-Wall -Wextra -Wpedantic -Werror` build: PASS in assistant validation
+- C helper unit test: PASS in assistant validation
+- Python UDS integration suite: PASS in assistant validation
+- ASan/UBSan C helper + server/integration run: PASS in assistant validation
+- filesystem socket mode is `0600`: PASS in automated test
+- regular-file collision is preserved: PASS in automated test
+- overlong Unix socket path is rejected: PASS in automated test
+- live duplicate listener is rejected: PASS in automated test
+- stale socket inode is recovered: PASS in automated test
+- peer credentials come from `SO_PEERCRED`: PASS in automated test
+- split writes round-trip as one raw byte stream: PASS in automated test
+- graceful shutdown removes the socket pathname: PASS in automated test
+- complete project `make test`: PENDING LOCAL FEDORA RUN
+- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
+- `make phase29-gate`: PENDING LOCAL FEDORA RUN
+- `git diff --check`: PASS in assistant validation
+
+### Next Phase
+
+Phase 30 — framed IPC: turn the Phase 29 byte stream into explicit application
+messages with a bounded length prefix and parser state machine.

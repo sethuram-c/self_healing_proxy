@@ -17,6 +17,9 @@ CGROUP_MEMORY_LAB := scripts/cgroup_memory_lab.sh
 CPU_PRESSURE := build/cpu_pressure
 CGROUP_CPU_LAB := scripts/cgroup_cpu_lab.sh
 ISOLATION_LAUNCHER := control-plane/isolation_launcher.py
+UDS_SERVER := build/uds_server
+UDS_TEST := build/test_uds
+SANITIZED_UDS_SERVER := build/uds_server-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
 NONBLOCKING_TEST := build/test_nonblocking
@@ -54,6 +57,9 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	test-stage3-hardening \
 	phase28-gate \
 	stage3-gate \
+	uds-server \
+	test-uds \
+	phase29-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -71,6 +77,7 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	sanitize-pid-mount \
 	sanitize-memory-pressure \
 	sanitize-cpu-pressure \
+	sanitize-uds \
 	sanitize-tcp \
 	sanitize-epoll \
 	benchmark \
@@ -105,6 +112,20 @@ $(MEMORY_PRESSURE): src/memory_pressure.c
 $(CPU_PRESSURE): src/cpu_pressure.c
 	mkdir -p build
 	$(CC) $(CFLAGS) src/cpu_pressure.c -o $(CPU_PRESSURE)
+
+$(UDS_SERVER): src/uds_server.c src/uds.c include/uds.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		src/uds_server.c \
+		src/uds.c \
+		-o $(UDS_SERVER)
+
+$(UDS_TEST): tests/unit/test_uds.c src/uds.c include/uds.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		tests/unit/test_uds.c \
+		src/uds.c \
+		-o $(UDS_TEST)
 
 $(TCP_LISTENER): \
 	src/tcp_listener.c \
@@ -254,6 +275,9 @@ cgroup-cpu-lab: $(CPU_PRESSURE)
 	@echo "  sudo $(CGROUP_CPU_LAB) verify"
 	@echo "  sudo $(CGROUP_CPU_LAB) cleanup"
 
+uds-server: $(UDS_SERVER)
+	./$(UDS_SERVER) --socket /tmp/self-healing-proxy-phase29.sock
+
 isolation-launcher:
 	@echo "Phase 27 composed isolation launcher commands require root; use:"
 	@echo "  sudo python3 $(ISOLATION_LAUNCHER) start -- /usr/bin/sleep 300"
@@ -288,7 +312,8 @@ test-unit: \
 	$(NONBLOCKING_TEST) \
 	$(CONNECTION_TEST) \
 	$(BACKEND_POOL_TEST) \
-	$(HTTP_FRAMING_TEST)
+	$(HTTP_FRAMING_TEST) \
+	$(UDS_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -300,10 +325,12 @@ test-unit: \
 	./$(CONNECTION_TEST)
 	./$(BACKEND_POOL_TEST)
 	./$(HTTP_FRAMING_TEST)
+	./$(UDS_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
-	$(EPOLL_SERVER)
+	$(EPOLL_SERVER) \
+	$(UDS_SERVER)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -322,6 +349,7 @@ test-integration: \
 	python3 tests/integration/test_cgroup_cpu_throttle.py
 	python3 tests/integration/test_isolation_launcher.py
 	python3 tests/integration/test_stage3_hardening.py
+	python3 tests/integration/test_uds_server.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -393,6 +421,20 @@ sanitize-cpu-pressure:
 	$(CC) $(CFLAGS) $(SANFLAGS) src/cpu_pressure.c -o build/cpu_pressure-sanitized
 	CPU_PRESSURE_BIN=build/cpu_pressure-sanitized python3 tests/unit/test_cpu_pressure.py
 
+sanitize-uds:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		tests/unit/test_uds.c \
+		src/uds.c \
+		-o build/test_uds-sanitized
+	./build/test_uds-sanitized
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		src/uds_server.c \
+		src/uds.c \
+		-o $(SANITIZED_UDS_SERVER)
+	UDS_SERVER_BIN=$(SANITIZED_UDS_SERVER) python3 tests/integration/test_uds_server.py
+
 sanitize-tcp:
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
@@ -444,6 +486,7 @@ sanitize: \
 	sanitize-pid-mount \
 	sanitize-memory-pressure \
 	sanitize-cpu-pressure \
+	sanitize-uds \
 	sanitize-tcp \
 	sanitize-epoll
 
@@ -530,6 +573,18 @@ stage3-gate: $(NAMESPACE_INSPECT) $(PID_MOUNT_LAB) $(MEMORY_PRESSURE) $(CPU_PRES
 	$(MAKE) sanitize
 	sudo python3 control-plane/isolation_launcher.py doctor | grep -q '^INSTANCE_STATE=CLEAN$$'
 	@echo "Stage 3 gate passed: Linux namespace isolation, cgroup controls, hardened launcher, stale recovery, regressions, and sanitizers completed."
+
+
+test-uds: $(UDS_SERVER) $(UDS_TEST)
+	./$(UDS_TEST)
+	python3 tests/integration/test_uds_server.py
+
+phase29-gate: $(UDS_SERVER) $(UDS_TEST)
+	./$(UDS_TEST)
+	python3 tests/integration/test_uds_server.py
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 29 gate passed: Unix domain socket lifecycle, credentials, stream behavior, cleanup, regressions, and sanitizers completed."
 
 clean:
 	rm -rf build
