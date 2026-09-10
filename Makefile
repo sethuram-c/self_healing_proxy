@@ -20,6 +20,9 @@ ISOLATION_LAUNCHER := control-plane/isolation_launcher.py
 UDS_SERVER := build/uds_server
 UDS_TEST := build/test_uds
 SANITIZED_UDS_SERVER := build/uds_server-sanitized
+IPC_FRAMED_SERVER := build/ipc_framed_server
+IPC_FRAME_TEST := build/test_ipc_frame
+SANITIZED_IPC_FRAMED_SERVER := build/ipc_framed_server-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
 NONBLOCKING_TEST := build/test_nonblocking
@@ -60,6 +63,9 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	uds-server \
 	test-uds \
 	phase29-gate \
+	ipc-framed-server \
+	test-ipc-framing \
+	phase30-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -78,6 +84,7 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	sanitize-memory-pressure \
 	sanitize-cpu-pressure \
 	sanitize-uds \
+	sanitize-ipc-framing \
 	sanitize-tcp \
 	sanitize-epoll \
 	benchmark \
@@ -126,6 +133,21 @@ $(UDS_TEST): tests/unit/test_uds.c src/uds.c include/uds.h
 		tests/unit/test_uds.c \
 		src/uds.c \
 		-o $(UDS_TEST)
+
+$(IPC_FRAMED_SERVER): src/ipc_framed_server.c src/ipc_frame.c src/uds.c include/ipc_frame.h include/uds.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		src/ipc_framed_server.c \
+		src/ipc_frame.c \
+		src/uds.c \
+		-o $(IPC_FRAMED_SERVER)
+
+$(IPC_FRAME_TEST): tests/unit/test_ipc_frame.c src/ipc_frame.c include/ipc_frame.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		tests/unit/test_ipc_frame.c \
+		src/ipc_frame.c \
+		-o $(IPC_FRAME_TEST)
 
 $(TCP_LISTENER): \
 	src/tcp_listener.c \
@@ -278,6 +300,9 @@ cgroup-cpu-lab: $(CPU_PRESSURE)
 uds-server: $(UDS_SERVER)
 	./$(UDS_SERVER) --socket /tmp/self-healing-proxy-phase29.sock
 
+ipc-framed-server: $(IPC_FRAMED_SERVER)
+	./$(IPC_FRAMED_SERVER) --socket /tmp/self-healing-proxy-phase30.sock
+
 isolation-launcher:
 	@echo "Phase 27 composed isolation launcher commands require root; use:"
 	@echo "  sudo python3 $(ISOLATION_LAUNCHER) start -- /usr/bin/sleep 300"
@@ -313,7 +338,8 @@ test-unit: \
 	$(CONNECTION_TEST) \
 	$(BACKEND_POOL_TEST) \
 	$(HTTP_FRAMING_TEST) \
-	$(UDS_TEST)
+	$(UDS_TEST) \
+	$(IPC_FRAME_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -326,11 +352,13 @@ test-unit: \
 	./$(BACKEND_POOL_TEST)
 	./$(HTTP_FRAMING_TEST)
 	./$(UDS_TEST)
+	./$(IPC_FRAME_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
 	$(EPOLL_SERVER) \
-	$(UDS_SERVER)
+	$(UDS_SERVER) \
+	$(IPC_FRAMED_SERVER)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -350,6 +378,7 @@ test-integration: \
 	python3 tests/integration/test_isolation_launcher.py
 	python3 tests/integration/test_stage3_hardening.py
 	python3 tests/integration/test_uds_server.py
+	python3 tests/integration/test_ipc_framed_server.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -435,6 +464,21 @@ sanitize-uds:
 		-o $(SANITIZED_UDS_SERVER)
 	UDS_SERVER_BIN=$(SANITIZED_UDS_SERVER) python3 tests/integration/test_uds_server.py
 
+sanitize-ipc-framing:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		tests/unit/test_ipc_frame.c \
+		src/ipc_frame.c \
+		-o build/test_ipc_frame-sanitized
+	./build/test_ipc_frame-sanitized
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		src/ipc_framed_server.c \
+		src/ipc_frame.c \
+		src/uds.c \
+		-o $(SANITIZED_IPC_FRAMED_SERVER)
+	IPC_FRAMED_SERVER_BIN=$(SANITIZED_IPC_FRAMED_SERVER) python3 tests/integration/test_ipc_framed_server.py
+
 sanitize-tcp:
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
@@ -487,6 +531,7 @@ sanitize: \
 	sanitize-memory-pressure \
 	sanitize-cpu-pressure \
 	sanitize-uds \
+	sanitize-ipc-framing \
 	sanitize-tcp \
 	sanitize-epoll
 
@@ -585,6 +630,18 @@ phase29-gate: $(UDS_SERVER) $(UDS_TEST)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 29 gate passed: Unix domain socket lifecycle, credentials, stream behavior, cleanup, regressions, and sanitizers completed."
+
+
+test-ipc-framing: $(IPC_FRAMED_SERVER) $(IPC_FRAME_TEST)
+	./$(IPC_FRAME_TEST)
+	python3 tests/integration/test_ipc_framed_server.py
+
+phase30-gate: $(IPC_FRAMED_SERVER) $(IPC_FRAME_TEST)
+	./$(IPC_FRAME_TEST)
+	python3 tests/integration/test_ipc_framed_server.py
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 30 gate passed: framed IPC boundaries, fragmentation/coalescing, malformed-frame rejection, regressions, and sanitizers completed."
 
 clean:
 	rm -rf build

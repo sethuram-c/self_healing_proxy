@@ -403,3 +403,46 @@ unframed. `SOCK_STREAM` is a byte stream: application messages are not preserved
 by `send()` boundaries. Phase 30 adds bounded framing; Phase 31 makes the
 telemetry delivery path nonblocking. The production proxy core is not modified
 in Phase 29.
+
+
+## Phase 30 Framed IPC
+
+Phase 30 adds explicit application message boundaries above the Phase 29 Unix
+domain `SOCK_STREAM` transport. The wire format is deliberately compact and
+bounded:
+
+```text
+0               4   5   6       8              12
++---------------+---+---+-------+---------------+
+| magic SHP1    |ver|typ| flags | payload_len   |
++---------------+---+---+-------+---------------+
+| payload bytes ...                               |
++-------------------------------------------------+
+```
+
+All multibyte integers are network byte order. Version is currently `1`, flags
+must be zero, and payloads are capped at 64 KiB. Defined frame types are event
+(1), control (2), and heartbeat (3). The decoder is incremental: arbitrary
+chunks from `recv()` may contain part of a header, part of a payload, exactly
+one frame, or several coalesced frames.
+
+Build and run the framed lab:
+
+```bash
+make build/ipc_framed_server build/test_ipc_frame
+./build/test_ipc_frame
+./build/ipc_framed_server --socket /tmp/self-healing-proxy-phase30.sock
+```
+
+Targeted validation:
+
+```bash
+make test-ipc-framing
+make sanitize-ipc-framing
+make phase30-gate
+```
+
+The framed server is still deliberately blocking and sequential. A malformed
+client is disconnected while the server remains available for later clients.
+Phase 31 owns nonblocking telemetry delivery, queueing, and integration with the
+proxy event loop.

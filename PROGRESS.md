@@ -1449,7 +1449,7 @@ Phase 29 — Unix domain sockets and the local observability/control IPC boundar
 
 ## Phase 29 — Unix Domain Sockets and the Local IPC Boundary
 
-Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -1524,12 +1524,82 @@ Phase 31 -> nonblocking telemetry path
 - peer credentials come from `SO_PEERCRED`: PASS in automated test
 - split writes round-trip as one raw byte stream: PASS in automated test
 - graceful shutdown removes the socket pathname: PASS in automated test
-- complete project `make test`: PENDING LOCAL FEDORA RUN
-- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
-- `make phase29-gate`: PENDING LOCAL FEDORA RUN
+- complete project `make test`: PASS
+- complete project `make sanitize`: PASS
+- `make phase29-gate`: PASS
 - `git diff --check`: PASS in assistant validation
 
 ### Next Phase
 
 Phase 30 — framed IPC: turn the Phase 29 byte stream into explicit application
-messages with a bounded length prefix and parser state machine.
+messages with a bounded binary header and incremental parser state machine.
+
+## Phase 30 — Framed IPC Protocol
+
+Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+
+### Concepts Learned
+
+- `SOCK_STREAM` preserves byte order but not application message boundaries.
+- Framing must tolerate arbitrary fragmentation and coalescing across `recv()` calls.
+- Phase 30 uses a fixed 12-byte header: magic, version, type, flags, and big-endian payload length.
+- The protocol caps payloads at 64 KiB before allocating or consuming payload data.
+- Magic/version/type/flags are validated before payload processing.
+- A decoder call may emit zero, one, or many complete frames.
+- Zero-length frames are valid and are useful for heartbeats.
+- Malformed input is a per-client protocol failure; the listening server must survive and accept later peers.
+- Blocking framing is intentionally separate from Phase 31 nonblocking telemetry delivery.
+
+### Wire Format
+
+```text
+bytes 0..3   magic       "SHP1"
+byte  4      version     1
+byte  5      type        1=event, 2=control, 3=heartbeat
+bytes 6..7   flags       must be zero
+bytes 8..11  payload_len unsigned 32-bit, network byte order
+bytes 12..   payload     0..65536 bytes
+```
+
+### Implementation
+
+- `include/ipc_frame.h`
+  - protocol constants, frame types, decoder state, callback contract, header/send API.
+- `src/ipc_frame.c`
+  - network-byte-order header encoding/validation;
+  - bounded incremental state machine for split/coalesced stream input;
+  - `MSG_NOSIGNAL` send-all helper.
+- `src/ipc_framed_server.c`
+  - Phase 29 UDS lifecycle and peer credentials plus Phase 30 framing;
+  - echoes complete frames only;
+  - logs decoded type/length;
+  - drops a malformed client without terminating the listener.
+- `tests/unit/test_ipc_frame.c`
+  - fragmented header/payload input;
+  - multiple coalesced frames;
+  - zero-length heartbeat;
+  - invalid magic/version/type/flags;
+  - oversized payload rejection;
+  - encoded send helper wire check.
+- `tests/integration/test_ipc_framed_server.py`
+  - one-byte-at-a-time frame delivery;
+  - multiple frames in one write;
+  - 32 KiB payload across many writes;
+  - oversized malformed client followed by a healthy client;
+  - SIGTERM pathname cleanup.
+
+### Quality Gate
+
+- strict C11 build: PASS in assistant validation
+- frame unit tests: PASS in assistant validation
+- framed UDS integration tests: PASS in assistant validation
+- ASan/UBSan frame unit + server tests: PASS in assistant validation
+- complete project `make test`: PENDING LOCAL FEDORA RUN
+- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
+- `make phase30-gate`: PENDING LOCAL FEDORA RUN
+- `git diff --check`: PASS in assistant validation
+
+### Next Phase
+
+Phase 31 — nonblocking telemetry path: connect framed IPC to event-driven delivery
+without allowing observability backpressure to stall proxy traffic.
