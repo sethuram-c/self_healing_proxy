@@ -446,3 +446,45 @@ The framed server is still deliberately blocking and sequential. A malformed
 client is disconnected while the server remains available for later clients.
 Phase 31 owns nonblocking telemetry delivery, queueing, and integration with the
 proxy event loop.
+
+## Phase 31 Nonblocking telemetry path
+
+Phase 31 turns the Phase 30 framed transport into a bounded nonblocking producer
+path. The goal is not to maximize telemetry throughput; the goal is to guarantee
+that observability cannot stall request processing when the collector is slow,
+missing, or disconnected.
+
+The reusable `telemetry_channel` owns a nonblocking Unix-stream fd plus a bounded
+FIFO of already-framed Phase 30 messages. `send(..., MSG_DONTWAIT|MSG_NOSIGNAL)`
+is attempted opportunistically. `EAGAIN` is recorded as normal backpressure, not
+as a fatal application error. `EPOLLOUT` is requested only while a connect is in
+progress or queued bytes remain.
+
+The queue has a strict byte cap. When adding another complete frame would exceed
+that cap, Phase 31 deliberately drops the newest telemetry frame and increments a
+counter. Previously queued order is preserved. When no collector can be
+connected, frames are dropped immediately instead of accumulating indefinitely.
+A broken collector disconnects only the telemetry channel and drops its remaining
+queue; the producer remains healthy.
+
+Build and targeted validation:
+
+```bash
+make build/telemetry_nonblocking_lab build/test_telemetry_channel
+./build/test_telemetry_channel
+python3 tests/integration/test_nonblocking_telemetry.py
+make test-nonblocking-telemetry
+make sanitize-nonblocking-telemetry
+make phase31-gate
+```
+
+A useful slow-consumer experiment is to accept the Unix connection but stop
+reading. With a small `SO_SNDBUF` the sender reaches `EAGAIN`, the userspace
+queue reaches its configured cap, and subsequent telemetry is dropped while the
+producer still completes promptly. A healthy draining collector test separately
+requires every frame to arrive with zero drops.
+
+Phase 31 is intentionally a reusable transport module plus lab rather than final
+request telemetry instrumentation. Phase 32 adds request/trace identity; later
+observability phases will attach semantic events to the proxy using this bounded
+nonblocking path.

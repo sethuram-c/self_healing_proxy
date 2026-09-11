@@ -23,6 +23,9 @@ SANITIZED_UDS_SERVER := build/uds_server-sanitized
 IPC_FRAMED_SERVER := build/ipc_framed_server
 IPC_FRAME_TEST := build/test_ipc_frame
 SANITIZED_IPC_FRAMED_SERVER := build/ipc_framed_server-sanitized
+TELEMETRY_LAB := build/telemetry_nonblocking_lab
+TELEMETRY_CHANNEL_TEST := build/test_telemetry_channel
+SANITIZED_TELEMETRY_LAB := build/telemetry_nonblocking_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
 NONBLOCKING_TEST := build/test_nonblocking
@@ -66,6 +69,9 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	ipc-framed-server \
 	test-ipc-framing \
 	phase30-gate \
+	telemetry-lab \
+	test-nonblocking-telemetry \
+	phase31-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -85,6 +91,7 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	sanitize-cpu-pressure \
 	sanitize-uds \
 	sanitize-ipc-framing \
+	sanitize-nonblocking-telemetry \
 	sanitize-tcp \
 	sanitize-epoll \
 	benchmark \
@@ -148,6 +155,22 @@ $(IPC_FRAME_TEST): tests/unit/test_ipc_frame.c src/ipc_frame.c include/ipc_frame
 		tests/unit/test_ipc_frame.c \
 		src/ipc_frame.c \
 		-o $(IPC_FRAME_TEST)
+
+$(TELEMETRY_LAB): src/telemetry_nonblocking_lab.c src/telemetry_channel.c src/ipc_frame.c include/telemetry_channel.h include/ipc_frame.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		src/telemetry_nonblocking_lab.c \
+		src/telemetry_channel.c \
+		src/ipc_frame.c \
+		-o $(TELEMETRY_LAB)
+
+$(TELEMETRY_CHANNEL_TEST): tests/unit/test_telemetry_channel.c src/telemetry_channel.c src/ipc_frame.c include/telemetry_channel.h include/ipc_frame.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		tests/unit/test_telemetry_channel.c \
+		src/telemetry_channel.c \
+		src/ipc_frame.c \
+		-o $(TELEMETRY_CHANNEL_TEST)
 
 $(TCP_LISTENER): \
 	src/tcp_listener.c \
@@ -339,7 +362,8 @@ test-unit: \
 	$(BACKEND_POOL_TEST) \
 	$(HTTP_FRAMING_TEST) \
 	$(UDS_TEST) \
-	$(IPC_FRAME_TEST)
+	$(IPC_FRAME_TEST) \
+	$(TELEMETRY_CHANNEL_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -353,12 +377,14 @@ test-unit: \
 	./$(HTTP_FRAMING_TEST)
 	./$(UDS_TEST)
 	./$(IPC_FRAME_TEST)
+	./$(TELEMETRY_CHANNEL_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
 	$(EPOLL_SERVER) \
 	$(UDS_SERVER) \
-	$(IPC_FRAMED_SERVER)
+	$(IPC_FRAMED_SERVER) \
+	$(TELEMETRY_LAB)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -379,6 +405,7 @@ test-integration: \
 	python3 tests/integration/test_stage3_hardening.py
 	python3 tests/integration/test_uds_server.py
 	python3 tests/integration/test_ipc_framed_server.py
+	python3 tests/integration/test_nonblocking_telemetry.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -479,6 +506,22 @@ sanitize-ipc-framing:
 		-o $(SANITIZED_IPC_FRAMED_SERVER)
 	IPC_FRAMED_SERVER_BIN=$(SANITIZED_IPC_FRAMED_SERVER) python3 tests/integration/test_ipc_framed_server.py
 
+sanitize-nonblocking-telemetry:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		tests/unit/test_telemetry_channel.c \
+		src/telemetry_channel.c \
+		src/ipc_frame.c \
+		-o build/test_telemetry_channel-sanitized
+	./build/test_telemetry_channel-sanitized
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		src/telemetry_nonblocking_lab.c \
+		src/telemetry_channel.c \
+		src/ipc_frame.c \
+		-o $(SANITIZED_TELEMETRY_LAB)
+	TELEMETRY_LAB_BIN=$(SANITIZED_TELEMETRY_LAB) python3 tests/integration/test_nonblocking_telemetry.py
+
 sanitize-tcp:
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
@@ -532,6 +575,7 @@ sanitize: \
 	sanitize-cpu-pressure \
 	sanitize-uds \
 	sanitize-ipc-framing \
+	sanitize-nonblocking-telemetry \
 	sanitize-tcp \
 	sanitize-epoll
 
@@ -642,6 +686,20 @@ phase30-gate: $(IPC_FRAMED_SERVER) $(IPC_FRAME_TEST)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 30 gate passed: framed IPC boundaries, fragmentation/coalescing, malformed-frame rejection, regressions, and sanitizers completed."
+
+telemetry-lab: $(TELEMETRY_LAB)
+	@echo "Run: ./$(TELEMETRY_LAB) --socket /tmp/collector.sock"
+
+test-nonblocking-telemetry: $(TELEMETRY_LAB) $(TELEMETRY_CHANNEL_TEST)
+	./$(TELEMETRY_CHANNEL_TEST)
+	python3 tests/integration/test_nonblocking_telemetry.py
+
+phase31-gate: $(TELEMETRY_LAB) $(TELEMETRY_CHANNEL_TEST)
+	./$(TELEMETRY_CHANNEL_TEST)
+	python3 tests/integration/test_nonblocking_telemetry.py
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 31 gate passed: bounded nonblocking telemetry, slow/missing collector isolation, regressions, and sanitizers completed."
 
 clean:
 	rm -rf build

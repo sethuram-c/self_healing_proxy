@@ -1603,3 +1603,75 @@ bytes 12..   payload     0..65536 bytes
 
 Phase 31 — nonblocking telemetry path: connect framed IPC to event-driven delivery
 without allowing observability backpressure to stall proxy traffic.
+
+## Phase 31 — Nonblocking Telemetry Path
+
+Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+
+### Concepts Learned
+
+- Telemetry is auxiliary work and must never become proxy data-plane backpressure.
+- Nonblocking `send()` may complete fully, partially, or fail with `EAGAIN`; all are normal states.
+- `EPOLLOUT` is useful only while connection completion or queued output needs progress.
+- A bounded userspace queue converts an unbounded slow-consumer problem into an explicit loss policy.
+- Phase 31 uses drop-newest on queue overflow, preserving ordering of already accepted telemetry.
+- Queue accounting tracks allocated frame bytes until a frame is completely sent, so the byte cap is a real memory bound even after partial writes.
+- A missing collector causes immediate telemetry drops rather than application blocking or unbounded buffering.
+- A disconnected/broken collector tears down only telemetry state and counts unsent queued frames as dropped.
+- Phase 30 framing remains unchanged; Phase 31 changes delivery semantics, not the wire protocol.
+
+### Implementation
+
+- `include/telemetry_channel.h`
+  - telemetry state machine (`DISCONNECTED`, `CONNECTING`, `CONNECTED`);
+  - bounded queue/counter contract;
+  - nonblocking connect, enqueue, flush, epoll-event and lifecycle API.
+- `src/telemetry_channel.c`
+  - nonblocking `AF_UNIX/SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK` connection;
+  - `SO_ERROR` connect completion;
+  - Phase 30 frame encoding before enqueue;
+  - FIFO partial-write offsets;
+  - `MSG_DONTWAIT|MSG_NOSIGNAL` writes;
+  - `EAGAIN` accounting;
+  - hard queue byte cap and drop-newest overflow policy;
+  - queued-frame dropping on peer failure.
+- `src/telemetry_nonblocking_lab.c`
+  - epoll-driven producer lab;
+  - configurable event count, payload size, queue cap, drain window, and socket send-buffer size;
+  - prints generated/enqueued/sent/dropped/would-block/connect-failure/queued statistics and enqueue latency.
+- `tests/unit/test_telemetry_channel.c`
+  - disconnected immediate-drop behavior;
+  - encoded frame flushing through `socketpair()`;
+  - bounded queue/drop-newest policy;
+  - peer-close isolation and queued-frame drop accounting.
+- `tests/integration/test_nonblocking_telemetry.py`
+  - missing collector must drop 20,000 events promptly;
+  - intentionally stalled collector must cause `EAGAIN` plus bounded drops without blocking the producer;
+  - healthy collector must decode all 200 Phase 30 frames with zero loss;
+  - CLI validation.
+
+### Phase Boundary
+
+Phase 31 proves the nonblocking delivery primitive independently. It does not yet
+assign request IDs, define the final telemetry schema, emit JSON, or integrate
+OpenTelemetry. The reusable channel is ready to be attached to semantic proxy
+events in subsequent phases.
+
+### Quality Gate
+
+- strict C11 build: PASS in assistant validation
+- telemetry channel unit test: PASS in assistant validation
+- missing collector nonblocking/drop test: PASS in assistant validation
+- slow collector `EAGAIN` + hard queue cap test: PASS in assistant validation
+- healthy collector zero-drop framed delivery: PASS in assistant validation
+- ASan/UBSan unit + integration run: PASS in assistant validation
+- `git diff --check`: PASS in assistant validation
+- complete project `make test`: PENDING LOCAL FEDORA RUN
+- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
+- `make phase31-gate`: PENDING LOCAL FEDORA RUN
+
+### Next Phase
+
+Phase 32 — request/trace IDs: introduce stable per-request correlation identity
+so subsequent structured logs, metrics, and traces can describe the same work
+across the proxy and observability pipeline.
