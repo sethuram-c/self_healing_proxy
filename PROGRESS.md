@@ -1675,3 +1675,49 @@ events in subsequent phases.
 Phase 32 — request/trace IDs: introduce stable per-request correlation identity
 so subsequent structured logs, metrics, and traces can describe the same work
 across the proxy and observability pipeline.
+
+## Phase 32 — Request / Trace IDs
+
+Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+
+### Concepts Learned
+
+- A request ID is a local correlation key; a trace ID is the distributed correlation key carried across process/service boundaries.
+- Phase 32 accepts W3C `traceparent` version `00` in canonical lowercase-hex form.
+- All-zero trace IDs and parent/span IDs are invalid and are never propagated.
+- A valid incoming trace ID is preserved while the proxy generates a new local span ID.
+- Missing or malformed `traceparent` never aborts request processing; a fresh trace is generated and the source is recorded as absent, accepted, or rejected.
+- Request IDs, trace IDs, and span IDs are generated with Linux `getrandom()` and retried if an all-zero value is ever produced.
+- Retry/backend-attempt spans change per attempt, but request ID and trace ID stay stable for one logical request.
+- The identifiers are carried inside Phase 30 EVENT frames sent through the Phase 31 nonblocking telemetry channel.
+
+### Implementation
+
+- `include/trace_context.h`: fixed-size ID types, source classification, request-start/retry/formatting API.
+- `src/trace_context.c`: strict version-00 parser, lower-hex validation, nonzero checks, `getrandom()` generation, retry-span generation, canonical formatting.
+- `src/trace_context_telemetry_lab.c`: simulates multiple backend attempts and emits correlated Phase 30 EVENT frames through Phase 31.
+- `tests/unit/test_trace_context.c`: valid, invalid, generated, and retry invariants.
+- `tests/integration/test_trace_context_telemetry.py`: end-to-end framed propagation, remote trace preservation, malformed fallback, stable trace/request IDs and unique attempt spans.
+
+### Phase Boundary
+
+Phase 32 establishes correlation identity and propagation only. It does not yet define final JSON logging, export spans, or implement OpenTelemetry. Phase 33 will define structured JSON logs; Phase 36 will export traces.
+
+### Quality Gate
+
+- strict C11 build: PASS in assistant validation
+- trace context unit tests: PASS in assistant validation
+- generated identity propagation: PASS in assistant validation
+- valid W3C traceparent preservation: PASS in assistant validation
+- malformed/zero traceparent safe fallback: PASS in assistant validation
+- request/trace stability across retries: PASS in assistant validation
+- unique attempt span IDs: PASS in assistant validation
+- Phase 30 framed telemetry propagation: PASS in assistant validation
+- ASan/UBSan unit + integration run: PASS in assistant validation
+- complete project `make test`: PENDING LOCAL FEDORA RUN
+- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
+- `make phase32-gate`: PENDING LOCAL FEDORA RUN
+
+### Next Phase
+
+Phase 33 — structured JSON logs: define a stable event schema carrying the Phase 32 correlation identifiers without blocking the proxy fast path.

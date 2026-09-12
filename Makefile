@@ -26,6 +26,9 @@ SANITIZED_IPC_FRAMED_SERVER := build/ipc_framed_server-sanitized
 TELEMETRY_LAB := build/telemetry_nonblocking_lab
 TELEMETRY_CHANNEL_TEST := build/test_telemetry_channel
 SANITIZED_TELEMETRY_LAB := build/telemetry_nonblocking_lab-sanitized
+TRACE_CONTEXT_LAB := build/trace_context_telemetry_lab
+TRACE_CONTEXT_TEST := build/test_trace_context
+SANITIZED_TRACE_CONTEXT_LAB := build/trace_context_telemetry_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
 NONBLOCKING_TEST := build/test_nonblocking
@@ -72,6 +75,9 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	telemetry-lab \
 	test-nonblocking-telemetry \
 	phase31-gate \
+	trace-context-lab \
+	test-trace-context \
+	phase32-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -92,6 +98,7 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	sanitize-uds \
 	sanitize-ipc-framing \
 	sanitize-nonblocking-telemetry \
+	sanitize-trace-context \
 	sanitize-tcp \
 	sanitize-epoll \
 	benchmark \
@@ -171,6 +178,23 @@ $(TELEMETRY_CHANNEL_TEST): tests/unit/test_telemetry_channel.c src/telemetry_cha
 		src/telemetry_channel.c \
 		src/ipc_frame.c \
 		-o $(TELEMETRY_CHANNEL_TEST)
+
+
+$(TRACE_CONTEXT_LAB): src/trace_context_telemetry_lab.c src/trace_context.c src/telemetry_channel.c src/ipc_frame.c include/trace_context.h include/telemetry_channel.h include/ipc_frame.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		src/trace_context_telemetry_lab.c \
+		src/trace_context.c \
+		src/telemetry_channel.c \
+		src/ipc_frame.c \
+		-o $(TRACE_CONTEXT_LAB)
+
+$(TRACE_CONTEXT_TEST): tests/unit/test_trace_context.c src/trace_context.c include/trace_context.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		tests/unit/test_trace_context.c \
+		src/trace_context.c \
+		-o $(TRACE_CONTEXT_TEST)
 
 $(TCP_LISTENER): \
 	src/tcp_listener.c \
@@ -363,7 +387,8 @@ test-unit: \
 	$(HTTP_FRAMING_TEST) \
 	$(UDS_TEST) \
 	$(IPC_FRAME_TEST) \
-	$(TELEMETRY_CHANNEL_TEST)
+	$(TELEMETRY_CHANNEL_TEST) \
+	$(TRACE_CONTEXT_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -378,13 +403,15 @@ test-unit: \
 	./$(UDS_TEST)
 	./$(IPC_FRAME_TEST)
 	./$(TELEMETRY_CHANNEL_TEST)
+	./$(TRACE_CONTEXT_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
 	$(EPOLL_SERVER) \
 	$(UDS_SERVER) \
 	$(IPC_FRAMED_SERVER) \
-	$(TELEMETRY_LAB)
+	$(TELEMETRY_LAB) \
+	$(TRACE_CONTEXT_LAB)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -406,6 +433,7 @@ test-integration: \
 	python3 tests/integration/test_uds_server.py
 	python3 tests/integration/test_ipc_framed_server.py
 	python3 tests/integration/test_nonblocking_telemetry.py
+	python3 tests/integration/test_trace_context_telemetry.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -522,6 +550,22 @@ sanitize-nonblocking-telemetry:
 		-o $(SANITIZED_TELEMETRY_LAB)
 	TELEMETRY_LAB_BIN=$(SANITIZED_TELEMETRY_LAB) python3 tests/integration/test_nonblocking_telemetry.py
 
+sanitize-trace-context:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		tests/unit/test_trace_context.c \
+		src/trace_context.c \
+		-o build/test_trace_context-sanitized
+	./build/test_trace_context-sanitized
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		src/trace_context_telemetry_lab.c \
+		src/trace_context.c \
+		src/telemetry_channel.c \
+		src/ipc_frame.c \
+		-o $(SANITIZED_TRACE_CONTEXT_LAB)
+	TRACE_CONTEXT_LAB_BIN=$(SANITIZED_TRACE_CONTEXT_LAB) python3 tests/integration/test_trace_context_telemetry.py
+
 sanitize-tcp:
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
@@ -576,6 +620,7 @@ sanitize: \
 	sanitize-uds \
 	sanitize-ipc-framing \
 	sanitize-nonblocking-telemetry \
+	sanitize-trace-context \
 	sanitize-tcp \
 	sanitize-epoll
 
@@ -700,6 +745,20 @@ phase31-gate: $(TELEMETRY_LAB) $(TELEMETRY_CHANNEL_TEST)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 31 gate passed: bounded nonblocking telemetry, slow/missing collector isolation, regressions, and sanitizers completed."
+
+trace-context-lab: $(TRACE_CONTEXT_LAB)
+	@echo "Run: ./$(TRACE_CONTEXT_LAB) --socket /tmp/collector.sock --attempts 3"
+
+test-trace-context: $(TRACE_CONTEXT_LAB) $(TRACE_CONTEXT_TEST)
+	./$(TRACE_CONTEXT_TEST)
+	python3 tests/integration/test_trace_context_telemetry.py
+
+phase32-gate: $(TRACE_CONTEXT_LAB) $(TRACE_CONTEXT_TEST)
+	./$(TRACE_CONTEXT_TEST)
+	python3 tests/integration/test_trace_context_telemetry.py
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 32 gate passed: request/trace identity, traceparent validation, retry correlation, framed telemetry propagation, regressions, and sanitizers completed."
 
 clean:
 	rm -rf build

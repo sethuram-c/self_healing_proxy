@@ -488,3 +488,26 @@ Phase 31 is intentionally a reusable transport module plus lab rather than final
 request telemetry instrumentation. Phase 32 adds request/trace identity; later
 observability phases will attach semantic events to the proxy using this bounded
 nonblocking path.
+
+## Phase 32 Request and trace IDs
+
+Phase 32 adds correlation identity above the Phase 31 nonblocking telemetry transport. A logical request receives a locally generated request ID plus W3C trace context. If a canonical version-00 `traceparent` is valid, its trace ID and trace flags are preserved while a new local span ID is created. Missing or malformed trace context never rejects application traffic; a new trace is generated instead.
+
+Accepted version-00 format:
+
+```text
+00-<32 lowercase hex trace-id>-<16 lowercase hex parent-id>-<2 hex flags>
+```
+
+All-zero trace IDs and parent IDs are invalid. New trace IDs, request IDs, and span IDs use Linux `getrandom()`. Retries/backend attempts keep the same request ID and trace ID while receiving a fresh local span ID.
+
+The Phase 32 lab emits these identifiers inside Phase 30 EVENT frames through the Phase 31 `telemetry_channel`, proving the observability layers compose before Phase 33 adds structured JSON and Phase 36 exports real spans.
+
+```bash
+make build/trace_context_telemetry_lab build/test_trace_context
+./build/test_trace_context
+python3 tests/integration/test_trace_context_telemetry.py
+make test-trace-context
+make sanitize-trace-context
+make phase32-gate
+```
