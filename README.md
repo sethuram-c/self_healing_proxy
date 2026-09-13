@@ -511,3 +511,40 @@ make test-trace-context
 make sanitize-trace-context
 make phase32-gate
 ```
+
+## Phase 33 Structured JSON logs
+
+Phase 33 replaces temporary space-delimited telemetry payloads with one stable machine-readable JSON object per event. The schema is versioned as `shp.telemetry.v1` and carries the Phase 32 request/trace/span correlation fields directly:
+
+```json
+{
+  "schema": "shp.telemetry.v1",
+  "timestamp_unix_ns": 1789234567890000000,
+  "event": "backend_attempt",
+  "request_id": "0123456789abcdef0123456789abcdef",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "span_id": "00f067aa0ba902b7",
+  "trace_source": "remote",
+  "attempt": 1,
+  "backend": "backend-a",
+  "result": "retry",
+  "message": "upstream reset"
+}
+```
+
+The C serializer is deliberately bounded and dependency-free. Event/backend/result/message fields have explicit maximum lengths, the final event is capped by a fixed output buffer, and serialization fails before enqueue if the event cannot fit. Strings are JSON-escaped so quotes, backslashes, control characters, and embedded newlines cannot corrupt the JSON document or inject additional log records.
+
+The JSON object remains the payload of a Phase 30 EVENT frame and is delivered through the Phase 31 bounded nonblocking telemetry channel. Formatting therefore does not change the transport/backpressure guarantees established in earlier phases.
+
+Build and targeted validation:
+
+```bash
+make build/json_log_telemetry_lab build/test_json_log
+./build/test_json_log
+python3 tests/integration/test_json_log_telemetry.py
+make test-json-logs
+make sanitize-json-logs
+make phase33-gate
+```
+
+The integration collector parses every payload with Python `json.loads()`, verifies stable request/trace IDs across retries, unique span IDs per attempt, hostile-string round trips, and confirms that an oversized field causes a clean producer failure with no partial frame emitted.

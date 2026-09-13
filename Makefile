@@ -29,6 +29,9 @@ SANITIZED_TELEMETRY_LAB := build/telemetry_nonblocking_lab-sanitized
 TRACE_CONTEXT_LAB := build/trace_context_telemetry_lab
 TRACE_CONTEXT_TEST := build/test_trace_context
 SANITIZED_TRACE_CONTEXT_LAB := build/trace_context_telemetry_lab-sanitized
+JSON_LOG_LAB := build/json_log_telemetry_lab
+JSON_LOG_TEST := build/test_json_log
+SANITIZED_JSON_LOG_LAB := build/json_log_telemetry_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
 NONBLOCKING_TEST := build/test_nonblocking
@@ -78,6 +81,9 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	trace-context-lab \
 	test-trace-context \
 	phase32-gate \
+	json-log-lab \
+	test-json-logs \
+	phase33-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -99,6 +105,7 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	sanitize-ipc-framing \
 	sanitize-nonblocking-telemetry \
 	sanitize-trace-context \
+	sanitize-json-logs \
 	sanitize-tcp \
 	sanitize-epoll \
 	benchmark \
@@ -195,6 +202,25 @@ $(TRACE_CONTEXT_TEST): tests/unit/test_trace_context.c src/trace_context.c inclu
 		tests/unit/test_trace_context.c \
 		src/trace_context.c \
 		-o $(TRACE_CONTEXT_TEST)
+
+
+$(JSON_LOG_LAB): src/json_log_telemetry_lab.c src/json_log.c src/trace_context.c src/telemetry_channel.c src/ipc_frame.c include/json_log.h include/trace_context.h include/telemetry_channel.h include/ipc_frame.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		src/json_log_telemetry_lab.c \
+		src/json_log.c \
+		src/trace_context.c \
+		src/telemetry_channel.c \
+		src/ipc_frame.c \
+		-o $(JSON_LOG_LAB)
+
+$(JSON_LOG_TEST): tests/unit/test_json_log.c src/json_log.c src/trace_context.c include/json_log.h include/trace_context.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		tests/unit/test_json_log.c \
+		src/json_log.c \
+		src/trace_context.c \
+		-o $(JSON_LOG_TEST)
 
 $(TCP_LISTENER): \
 	src/tcp_listener.c \
@@ -388,7 +414,8 @@ test-unit: \
 	$(UDS_TEST) \
 	$(IPC_FRAME_TEST) \
 	$(TELEMETRY_CHANNEL_TEST) \
-	$(TRACE_CONTEXT_TEST)
+	$(TRACE_CONTEXT_TEST) \
+	$(JSON_LOG_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -404,6 +431,7 @@ test-unit: \
 	./$(IPC_FRAME_TEST)
 	./$(TELEMETRY_CHANNEL_TEST)
 	./$(TRACE_CONTEXT_TEST)
+	./$(JSON_LOG_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
@@ -411,7 +439,8 @@ test-integration: \
 	$(UDS_SERVER) \
 	$(IPC_FRAMED_SERVER) \
 	$(TELEMETRY_LAB) \
-	$(TRACE_CONTEXT_LAB)
+	$(TRACE_CONTEXT_LAB) \
+	$(JSON_LOG_LAB)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -434,6 +463,7 @@ test-integration: \
 	python3 tests/integration/test_ipc_framed_server.py
 	python3 tests/integration/test_nonblocking_telemetry.py
 	python3 tests/integration/test_trace_context_telemetry.py
+	python3 tests/integration/test_json_log_telemetry.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -566,6 +596,24 @@ sanitize-trace-context:
 		-o $(SANITIZED_TRACE_CONTEXT_LAB)
 	TRACE_CONTEXT_LAB_BIN=$(SANITIZED_TRACE_CONTEXT_LAB) python3 tests/integration/test_trace_context_telemetry.py
 
+sanitize-json-logs:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		tests/unit/test_json_log.c \
+		src/json_log.c \
+		src/trace_context.c \
+		-o build/test_json_log-sanitized
+	./build/test_json_log-sanitized
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		src/json_log_telemetry_lab.c \
+		src/json_log.c \
+		src/trace_context.c \
+		src/telemetry_channel.c \
+		src/ipc_frame.c \
+		-o $(SANITIZED_JSON_LOG_LAB)
+	JSON_LOG_LAB_BIN=$(SANITIZED_JSON_LOG_LAB) python3 tests/integration/test_json_log_telemetry.py
+
 sanitize-tcp:
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
@@ -621,6 +669,7 @@ sanitize: \
 	sanitize-ipc-framing \
 	sanitize-nonblocking-telemetry \
 	sanitize-trace-context \
+	sanitize-json-logs \
 	sanitize-tcp \
 	sanitize-epoll
 
@@ -759,6 +808,20 @@ phase32-gate: $(TRACE_CONTEXT_LAB) $(TRACE_CONTEXT_TEST)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 32 gate passed: request/trace identity, traceparent validation, retry correlation, framed telemetry propagation, regressions, and sanitizers completed."
+
+json-log-lab: $(JSON_LOG_LAB)
+	@echo "Run: ./$(JSON_LOG_LAB) --socket /tmp/collector.sock --attempts 3"
+
+test-json-logs: $(JSON_LOG_LAB) $(JSON_LOG_TEST)
+	./$(JSON_LOG_TEST)
+	python3 tests/integration/test_json_log_telemetry.py
+
+phase33-gate: $(JSON_LOG_LAB) $(JSON_LOG_TEST)
+	./$(JSON_LOG_TEST)
+	python3 tests/integration/test_json_log_telemetry.py
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 33 gate passed: structured JSON schema, escaping, correlation fields, bounded serialization, regressions, and sanitizers completed."
 
 clean:
 	rm -rf build

@@ -1721,3 +1721,64 @@ Phase 32 establishes correlation identity and propagation only. It does not yet 
 ### Next Phase
 
 Phase 33 — structured JSON logs: define a stable event schema carrying the Phase 32 correlation identifiers without blocking the proxy fast path.
+
+## Phase 33 — Structured JSON Logs
+
+Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+
+### Concepts Learned
+
+- Structured logs are a machine contract, not formatted prose; every telemetry event is one complete JSON object with stable field names and types.
+- Phase 33 defines schema version `shp.telemetry.v1` so later consumers can detect incompatible event-shape changes explicitly.
+- Request, trace, and span identifiers from Phase 32 are first-class JSON fields rather than embedded text tokens.
+- `timestamp_unix_ns` is an integer wall-clock timestamp suitable for ordering/correlation across processes; duration measurement still belongs on monotonic clocks.
+- Untrusted strings must be JSON-escaped before serialization. Quotes, backslashes, newlines, tabs, and control bytes cannot be allowed to inject a second log line or corrupt the document.
+- Serialization is bounded. Oversized fields fail before a Phase 30 frame is queued, so no partial JSON event can escape.
+- JSON formatting changes event representation only; delivery still uses Phase 30 framing over the Phase 31 bounded nonblocking telemetry channel.
+
+### Schema
+
+Each Phase 33 event contains:
+
+- `schema`: `shp.telemetry.v1`
+- `timestamp_unix_ns`: integer Unix timestamp in nanoseconds
+- `event`: stable event name
+- `request_id`: 32 lowercase hex characters
+- `trace_id`: 32 lowercase hex characters
+- `span_id`: 16 lowercase hex characters
+- `trace_source`: `generated`, `remote`, or `rejected`
+- `attempt`: positive integer
+- `backend`: escaped string
+- `result`: escaped string
+- `message`: escaped string
+
+### Implementation
+
+- `include/json_log.h`: schema limits, event input structure, bounded serializer and escaping API.
+- `src/json_log.c`: fixed-buffer JSON writer, RFC 8259 string escaping, schema/correlation serialization, field-length checks, realtime nanosecond timestamp helper.
+- `src/json_log_telemetry_lab.c`: emits retry-correlated JSON EVENT frames through the Phase 31 telemetry channel.
+- `tests/unit/test_json_log.c`: escaping, schema/correlation fields, output-buffer exhaustion, oversized-field rejection and invalid-input behavior.
+- `tests/integration/test_json_log_telemetry.py`: parses real Phase 30 payloads with Python `json`, verifies stable request/trace IDs and unique attempt spans, hostile-string escaping, remote-trace preservation, and no partial emission on serialization failure.
+
+### Phase Boundary
+
+Phase 33 defines and validates the structured event representation. It does not yet run an OpenTelemetry Collector, export OTLP, define production metrics, or emit completed distributed traces. Phase 34 introduces the OpenTelemetry Collector boundary.
+
+### Quality Gate
+
+- strict C11 build: PASS in assistant validation
+- JSON serializer unit tests: PASS in assistant validation
+- valid JSON integration decoding: PASS in assistant validation
+- hostile-string/log-injection resistance: PASS in assistant validation
+- stable request/trace correlation across attempts: PASS in assistant validation
+- unique span IDs per attempt: PASS in assistant validation
+- remote trace preservation: PASS in assistant validation
+- oversized-field no-partial-frame behavior: PASS in assistant validation
+- ASan/UBSan unit + integration run: PASS in assistant validation
+- complete project `make test`: PENDING LOCAL FEDORA RUN
+- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
+- `make phase33-gate`: PENDING LOCAL FEDORA RUN
+
+### Next Phase
+
+Phase 34 — OpenTelemetry Collector: introduce an external collector process and a clean export boundary without making the proxy depend on collector availability.
