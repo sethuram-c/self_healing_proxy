@@ -548,3 +548,132 @@ make phase33-gate
 ```
 
 The integration collector parses every payload with Python `json.loads()`, verifies stable request/trace IDs across retries, unique span IDs per attempt, hostile-string round trips, and confirms that an oversized field causes a clean producer failure with no partial frame emitted.
+
+## Phase 34 — OpenTelemetry Collector Integration
+
+Phase 34 introduces the first external observability process while preserving the
+proxy-side reliability boundary built in Phases 29–33.
+
+The data path is now:
+
+```text
+C proxy / lab
+  -> Phase 33 bounded JSON event
+  -> Phase 30 SHP1 frame
+  -> Phase 31 nonblocking Unix socket
+  -> control-plane/otel_bridge.py
+  -> OTLP/HTTP JSON POST /v1/logs
+  -> OpenTelemetry Collector
+  -> debug exporter (Phase 34)
+```
+
+The C side does **not** speak HTTP or depend on Collector availability. The bridge
+owns HTTP conversion and export. If the Collector is unavailable, the bridge may
+fail or stop reading, but the Phase 31 producer still follows its bounded queue /
+drop policy instead of blocking the proxy data plane.
+
+### OTLP mapping
+
+The bridge maps each `shp.telemetry.v1` event to one OTLP `LogRecord`:
+
+- `timestamp_unix_ns` -> `timeUnixNano` (decimal string in OTLP JSON)
+- `trace_id` -> top-level OTLP `traceId`
+- `span_id` -> top-level OTLP `spanId`
+- original JSON -> log `body.stringValue`
+- request/event/backend/result metadata -> OTLP attributes
+- resource `service.name` -> `self-healing-proxy`
+
+OTLP/HTTP JSON uses `POST /v1/logs`, `Content-Type: application/json`, lowerCamelCase
+field names, hexadecimal trace/span IDs, and decimal strings for 64-bit timestamp
+fields.
+
+### Collector configuration
+
+`observability/otel-collector-config.yaml` enables the Collector OTLP HTTP receiver
+on container port `4318`, a small batch processor, and the `debug` exporter. The
+Phase 34 container lab publishes that receiver on host port `14318` by default.
+
+The project pins the lab image to:
+
+```text
+otel/opentelemetry-collector:0.156.0
+```
+
+Override it with `PHASE34_COLLECTOR_IMAGE` if needed.
+
+### Prepare and run the real Collector
+
+Fedora normally has Podman available. Docker is also supported.
+
+```bash
+make otel-collector-pull
+make otel-collector-start
+```
+
+Expected readiness marker:
+
+```text
+PHASE34_COLLECTOR_READY endpoint=http://127.0.0.1:14318/v1/logs ...
+```
+
+Inspect exported logs:
+
+```bash
+./scripts/otel_collector_lab.sh logs
+```
+
+Stop it with:
+
+```bash
+make otel-collector-stop
+```
+
+### Bridge
+
+Start the Collector, then start the SHP-to-OTLP bridge:
+
+```bash
+python3 control-plane/otel_bridge.py \
+  --socket /tmp/shp34-bridge.sock \
+  --otlp-endpoint http://127.0.0.1:14318/v1/logs
+```
+
+In another terminal, emit Phase 33 events:
+
+```bash
+./build/json_log_telemetry_lab \
+  --socket /tmp/shp34-bridge.sock \
+  --attempts 3
+```
+
+The bridge should print `PHASE34_EXPORT_OK` for accepted events. The Collector
+`debug` exporter provides human-readable evidence that the OTLP log record reached
+the real Collector pipeline.
+
+### Tests
+
+Fast tests use a local fake OTLP/HTTP endpoint and require no container runtime:
+
+```bash
+make test-otel-bridge
+```
+
+The real Collector test is explicit:
+
+```bash
+make otel-collector-pull
+make phase34-real
+```
+
+The full gate is:
+
+```bash
+make phase34-gate
+```
+
+It requires the pinned Collector image to be present locally, verifies real
+Collector acceptance, then runs the complete project regression and sanitizer
+suites.
+
+Phase 34 intentionally does not define production metrics or completed span
+export. Phase 35 introduces metrics; Phase 36 introduces trace/span export.

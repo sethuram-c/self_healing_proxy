@@ -1782,3 +1782,50 @@ Phase 33 defines and validates the structured event representation. It does not 
 ### Next Phase
 
 Phase 34 — OpenTelemetry Collector: introduce an external collector process and a clean export boundary without making the proxy depend on collector availability.
+
+## Phase 34 — OpenTelemetry Collector Integration
+
+Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+
+### Concepts Learned
+
+- The OpenTelemetry Collector is a separate observability process and must not become a synchronous dependency of the proxy data plane.
+- The existing Phase 29–33 protocol remains the local producer contract: Unix socket + SHP1 frame + bounded nonblocking channel + correlated structured JSON.
+- A Python bridge is an explicit protocol boundary: it validates `shp.telemetry.v1`, maps it to OTLP log records, and owns the potentially blocking HTTP export operation.
+- OTLP/HTTP logs use `POST /v1/logs` and may use Protobuf JSON encoding with `Content-Type: application/json`.
+- OTLP JSON represents trace/span identifiers as hexadecimal strings and 64-bit timestamp fields such as `timeUnixNano` as decimal strings.
+- Trace and span correlation become native OTLP `LogRecord` fields instead of only custom JSON keys.
+- Resource metadata such as `service.name=self-healing-proxy` identifies the telemetry-producing service independently from individual log attributes.
+- Collector/backend failure is isolated from the producer: HTTP 503/export failure is recorded by the bridge while the Phase 31 producer can still complete without waiting on an external backend.
+- The real Phase 34 gate uses an actual OpenTelemetry Collector container rather than treating a fake HTTP receiver as sufficient proof.
+
+### Implementation
+
+- `control-plane/otel_bridge.py`: validates Phase 33 framed JSON EVENTs, converts them to OTLP/HTTP JSON log requests, exports with a bounded per-request timeout, reports export counters, and cleans up its Unix socket.
+- `observability/otel-collector-config.yaml`: OTLP HTTP receiver, batch processor, logs pipeline, and detailed debug exporter.
+- `scripts/otel_collector_lab.sh`: Podman/Docker lifecycle wrapper with a pinned Collector image, deterministic port/config overrides, explicit image preparation, readiness probe, logs, and cleanup.
+- `tests/unit/test_otel_bridge.py`: validates Phase 33 schema handling and OTLP mapping, including native trace/span fields, decimal-string timestamps, attributes, endpoint normalization, and severity mapping.
+- `tests/integration/test_otel_collector_bridge.py`: end-to-end Phase 33 producer -> SHP frame -> bridge -> OTLP/HTTP tests, backend failure isolation, and an opt-in/required real Collector test.
+- `Makefile`: bridge checks/tests, Collector lifecycle helpers, `phase34-real`, and full `phase34-gate`.
+
+### Phase Boundary
+
+Phase 34 proves Collector integration for logs only. The bridge is intentionally a separate process and the Collector uses the debug exporter as observable proof. Phase 35 adds production metrics semantics; Phase 36 adds completed trace/span export. Backend selection, long-term storage, Grafana dashboards, and telemetry-overhead characterization remain later phases.
+
+### Quality Gate
+
+- Python syntax/bytecode validation: PASS in assistant validation
+- OTLP JSON mapping unit tests: PASS in assistant validation
+- native OTLP trace/span correlation fields: PASS in assistant validation
+- Phase 33 event schema validation: PASS in assistant validation
+- fake OTLP/HTTP successful export: PASS in assistant validation
+- HTTP 503 export failure isolation: PASS in assistant validation
+- Phase 31 producer completes despite OTLP backend failure: PASS in assistant validation
+- real OpenTelemetry Collector acceptance: PENDING LOCAL FEDORA RUN (container runtime unavailable in assistant environment)
+- complete project `make test`: PENDING LOCAL FEDORA RUN
+- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
+- `make phase34-gate`: PENDING LOCAL FEDORA RUN
+
+### Next Phase
+
+Phase 35 — Metrics: define bounded counters/gauges/histograms for request volume, latency, backend health, retries, drops, and resource behavior, then export them through OpenTelemetry.

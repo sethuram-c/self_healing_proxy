@@ -84,6 +84,13 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	json-log-lab \
 	test-json-logs \
 	phase33-gate \
+	otel-collector-pull \
+	otel-collector-start \
+	otel-collector-stop \
+	test-otel-bridge \
+	check-otel-bridge \
+	phase34-real \
+	phase34-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -422,6 +429,7 @@ test-unit: \
 	python3 tests/unit/test_pid_mount_lab.py
 	python3 tests/unit/test_memory_pressure.py
 	python3 tests/unit/test_cpu_pressure.py
+	python3 tests/unit/test_otel_bridge.py
 	./$(IO_BUFFER_TEST)
 	./$(NONBLOCKING_TEST)
 	./$(CONNECTION_TEST)
@@ -464,6 +472,7 @@ test-integration: \
 	python3 tests/integration/test_nonblocking_telemetry.py
 	python3 tests/integration/test_trace_context_telemetry.py
 	python3 tests/integration/test_json_log_telemetry.py
+	python3 tests/integration/test_otel_collector_bridge.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -822,6 +831,35 @@ phase33-gate: $(JSON_LOG_LAB) $(JSON_LOG_TEST)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 33 gate passed: structured JSON schema, escaping, correlation fields, bounded serialization, regressions, and sanitizers completed."
+
+otel-collector-pull:
+	./scripts/otel_collector_lab.sh pull
+
+otel-collector-start:
+	./scripts/otel_collector_lab.sh start
+
+otel-collector-stop:
+	./scripts/otel_collector_lab.sh stop
+
+check-otel-bridge:
+	python3 -m py_compile control-plane/otel_bridge.py tests/unit/test_otel_bridge.py tests/integration/test_otel_collector_bridge.py
+
+test-otel-bridge: $(JSON_LOG_LAB)
+	$(MAKE) check-otel-bridge
+	python3 tests/unit/test_otel_bridge.py
+	python3 tests/integration/test_otel_collector_bridge.py
+
+phase34-real: $(JSON_LOG_LAB)
+	PHASE34_REQUIRE_REAL=1 python3 tests/integration/test_otel_collector_bridge.py
+
+phase34-gate: $(JSON_LOG_LAB)
+	$(MAKE) check-otel-bridge
+	python3 tests/unit/test_otel_bridge.py
+	python3 tests/integration/test_otel_collector_bridge.py
+	PHASE34_REQUIRE_REAL=1 python3 tests/integration/test_otel_collector_bridge.py
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 34 gate passed: SHP JSON events converted to OTLP/HTTP, accepted by a real OpenTelemetry Collector, failure isolation, regressions, and sanitizers completed."
 
 clean:
 	rm -rf build
