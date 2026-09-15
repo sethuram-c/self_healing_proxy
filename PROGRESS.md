@@ -1536,7 +1536,7 @@ messages with a bounded binary header and incremental parser state machine.
 
 ## Phase 30 — Framed IPC Protocol
 
-Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -1606,7 +1606,7 @@ without allowing observability backpressure to stall proxy traffic.
 
 ## Phase 31 — Nonblocking Telemetry Path
 
-Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -1678,7 +1678,7 @@ across the proxy and observability pipeline.
 
 ## Phase 32 — Request / Trace IDs
 
-Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -1724,7 +1724,7 @@ Phase 33 — structured JSON logs: define a stable event schema carrying the Pha
 
 ## Phase 33 — Structured JSON Logs
 
-Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -1785,7 +1785,7 @@ Phase 34 — OpenTelemetry Collector: introduce an external collector process an
 
 ## Phase 34 — OpenTelemetry Collector Integration
 
-Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -1821,11 +1821,67 @@ Phase 34 proves Collector integration for logs only. The bridge is intentionally
 - fake OTLP/HTTP successful export: PASS in assistant validation
 - HTTP 503 export failure isolation: PASS in assistant validation
 - Phase 31 producer completes despite OTLP backend failure: PASS in assistant validation
-- real OpenTelemetry Collector acceptance: PENDING LOCAL FEDORA RUN (container runtime unavailable in assistant environment)
-- complete project `make test`: PENDING LOCAL FEDORA RUN
-- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
-- `make phase34-gate`: PENDING LOCAL FEDORA RUN
+- real OpenTelemetry Collector acceptance: PASS on Fedora
+- complete project `make test`: PASS on Fedora
+- complete project `make sanitize`: PASS on Fedora
+- `make phase34-gate`: PASS on Fedora
 
 ### Next Phase
 
 Phase 35 — Metrics: define bounded counters/gauges/histograms for request volume, latency, backend health, retries, drops, and resource behavior, then export them through OpenTelemetry.
+
+
+## Phase 35 — Metrics
+
+Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+
+### Concepts Learned
+
+- Metrics are aggregated state, not per-request event logs. The bridge derives cumulative OTLP metric streams from the validated Phase 33 event stream without changing the proxy-side nonblocking contract.
+- Monotonic counters use cumulative OTLP Sum points with a stable `startTimeUnixNano`; collector gaps therefore do not require the producer to replay every individual event.
+- `shp.requests` counts logical requests at attempt 1; `shp.retries` counts attempts after the first; backend-attempt and completion counters provide bounded operational dimensions.
+- Result labels are normalized to a fixed set (`success`, `retry`, `error`, `other`) instead of copying arbitrary strings into metric dimensions.
+- Backend label cardinality is explicitly bounded. The bridge tracks at most a configured number of backend label values and folds additional values into `__other__`.
+- Metrics export uses OTLP/HTTP `/v1/metrics` through the same external Collector boundary; it remains outside the proxy correctness path.
+- Metrics-export failure is counted and reported but, unless explicitly required by a test gate, does not make successful log ingestion or proxy-side telemetry production fail.
+- Phase 35 intentionally does not invent request-latency histograms because Phase 33 events do not yet carry a trustworthy monotonic request-duration measurement. A metric should represent a real measurement, not a synthetic placeholder.
+
+### Metrics
+
+- `shp.requests`: cumulative monotonic count of logical requests.
+- `shp.retries`: cumulative monotonic count of attempts after attempt 1.
+- `shp.backend.attempts`: cumulative monotonic count labeled by bounded `backend` and normalized `result`.
+- `shp.requests.completed`: cumulative monotonic count labeled by terminal `outcome`.
+- `shp.telemetry.log_export_failures`: cumulative bridge log-export failures.
+- `shp.telemetry.invalid_events`: cumulative invalid SHP/Phase 33 input count.
+- `shp.metrics.tracked_backends`: gauge showing the number of backend label values retained before overflow folding.
+
+### Implementation
+
+- `control-plane/otel_bridge.py`: adds bounded metric aggregation, OTLP Metrics JSON generation, `/v1/metrics` export, periodic cumulative snapshots, and metrics-export counters while preserving the Phase 34 log-export API by default.
+- `observability/otel-collector-config.yaml`: adds a native metrics pipeline to the existing OTLP receiver / batch / debug-exporter configuration.
+- `tests/unit/test_otel_metrics.py`: validates counter semantics, cumulative temporality, timestamp windows, result normalization, backend-label cardinality bounding, and metrics endpoint derivation.
+- `tests/integration/test_otel_metrics.py`: validates real framed events -> bridge -> OTLP logs + OTLP metrics, metrics failure isolation, and opt-in required acceptance by a real OpenTelemetry Collector.
+- `Makefile`: adds `check-otel-metrics`, `test-otel-metrics`, `phase35-real`, and `phase35-gate`.
+
+### Phase Boundary
+
+Phase 35 defines and exports operational counters/gauges that can be derived faithfully from the current event stream. It does not yet fabricate latency histograms or full distributed spans. Phase 36 introduces completed trace/span export; later phases add dashboards and overhead characterization.
+
+### Quality Gate
+
+- OTLP metrics unit tests: PASS in assistant validation
+- cumulative Sum semantics: PASS in assistant validation
+- backend label cardinality cap: PASS in assistant validation
+- result-label normalization: PASS in assistant validation
+- fake OTLP `/v1/metrics` export: PASS in assistant validation
+- metrics-export failure isolation: PASS in assistant validation
+- Phase 34 log-export regression compatibility: PASS in assistant validation
+- real OpenTelemetry Collector metrics acceptance: PENDING LOCAL FEDORA RUN
+- complete project `make test`: PENDING LOCAL FEDORA RUN
+- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
+- `make phase35-gate`: PENDING LOCAL FEDORA RUN
+
+### Next Phase
+
+Phase 36 — Traces: export completed request/backend-attempt spans with correct parentage and retry structure using the Phase 32 correlation context.

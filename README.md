@@ -677,3 +677,70 @@ suites.
 
 Phase 34 intentionally does not define production metrics or completed span
 export. Phase 35 introduces metrics; Phase 36 introduces trace/span export.
+
+## Phase 35 — Metrics
+
+Phase 35 derives bounded operational metrics from the same validated `shp.telemetry.v1`
+event stream used for logs. The proxy-side architecture does not change: C still emits
+bounded nonblocking SHP frames to the local bridge. The bridge owns aggregation and OTLP
+HTTP export.
+
+The bridge keeps metrics export disabled by default so Phase 34 behavior remains exactly
+compatible. Enable Phase 35 with, for example:
+
+```bash
+python3 control-plane/otel_bridge.py \
+  --socket /tmp/shp35-bridge.sock \
+  --otlp-endpoint http://127.0.0.1:14318/v1/logs \
+  --metrics-export-every 10
+```
+
+The metrics endpoint is derived automatically as `/v1/metrics`. It can be overridden with
+`--metrics-endpoint`.
+
+### Metric semantics
+
+Phase 35 exports cumulative OTLP sums and a gauge:
+
+- `shp.requests`: logical requests, counted when `attempt == 1`.
+- `shp.retries`: attempts after the first attempt.
+- `shp.backend.attempts`: attempts by bounded backend label and normalized result.
+- `shp.requests.completed`: terminal request outcomes.
+- `shp.telemetry.log_export_failures`: bridge log-export failures.
+- `shp.telemetry.invalid_events`: invalid framed/event input observed by the bridge.
+- `shp.metrics.tracked_backends`: gauge of retained backend label values.
+
+Result labels are normalized to `success`, `retry`, `error`, or `other`. Backend label
+cardinality is capped (16 by default); overflow values are folded into `__other__`.
+This prevents unbounded metric-series growth when backend strings are dynamic or hostile.
+
+The Collector config now contains both `logs` and `metrics` pipelines on the same OTLP HTTP
+receiver. The `debug` exporter remains the Phase 35 proof surface.
+
+Fast tests:
+
+```bash
+make test-otel-metrics
+```
+
+Real Collector proof:
+
+```bash
+make otel-collector-pull
+make phase35-real
+```
+
+Full quality gate:
+
+```bash
+make phase35-gate
+```
+
+Expected final marker:
+
+```text
+Phase 35 gate passed: bounded cumulative OTLP metrics, cardinality control, real Collector acceptance, failure isolation, regressions, and sanitizers completed.
+```
+
+Phase 35 deliberately does not invent latency histograms from log timestamps. Request latency
+must be measured from a monotonic duration source before it is exported as a histogram.

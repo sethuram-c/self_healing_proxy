@@ -31,6 +31,8 @@ HEADER = struct.Struct("!4sBBHI")
 MAX_PAYLOAD = 65536
 SCHEMA = "shp.telemetry.v1"
 DEFAULT_TIMEOUT_MS = 500
+DEFAULT_METRICS_EXPORT_EVERY = 0
+MAX_BACKEND_LABELS = 16
 
 _stop = False
 
@@ -41,6 +43,61 @@ class Counters:
     exported: int = 0
     export_failed: int = 0
     invalid: int = 0
+    metrics_exported: int = 0
+    metrics_export_failed: int = 0
+
+
+class MetricsState:
+    """Bounded cumulative metrics derived from Phase 33 events."""
+
+    def __init__(self, start_unix_ns: int | None = None, max_backends: int = MAX_BACKEND_LABELS):
+        if max_backends <= 0:
+            raise ValueError("max_backends must be positive")
+        self.start_unix_ns = time.time_ns() if start_unix_ns is None else start_unix_ns
+        self.max_backends = max_backends
+        self.requests_total = 0
+        self.retries_total = 0
+        self.completions = {"success": 0, "error": 0, "other": 0}
+        self.backend_attempts: dict[tuple[str, str], int] = {}
+        self._backends: set[str] = set()
+
+    @staticmethod
+    def normalize_result(value: str) -> str:
+        lowered = value.lower()
+        if lowered == "success":
+            return "success"
+        if lowered == "retry":
+            return "retry"
+        if lowered in {"error", "failed", "failure"}:
+            return "error"
+        return "other"
+
+    def backend_label(self, backend: str) -> str:
+        if backend in self._backends:
+            return backend
+        if len(self._backends) < self.max_backends:
+            self._backends.add(backend)
+            return backend
+        return "__other__"
+
+    def observe(self, event: dict[str, Any]) -> None:
+        event = validate_phase33_event(event)
+        result = self.normalize_result(event["result"])
+        backend = self.backend_label(event["backend"])
+
+        if event["attempt"] == 1:
+            self.requests_total += 1
+        if event["attempt"] > 1:
+            self.retries_total += 1
+        if result in {"success", "error"}:
+            self.completions[result] += 1
+
+        key = (backend, result)
+        self.backend_attempts[key] = self.backend_attempts.get(key, 0) + 1
+
+    @property
+    def tracked_backends(self) -> int:
+        return len(self._backends)
 
 
 def _signal_handler(_signum: int, _frame: object) -> None:
@@ -160,6 +217,157 @@ def build_otlp_logs_request(event: dict[str, Any], observed_unix_ns: int | None 
     }
 
 
+
+def _metric_attr(key: str, value: str) -> dict[str, Any]:
+    return _attribute(key, value)
+
+
+def _sum_metric(name: str, description: str, unit: str, points: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "name": name,
+        "description": description,
+        "unit": unit,
+        "sum": {
+            "aggregationTemporality": 2,
+            "isMonotonic": True,
+            "dataPoints": points,
+        },
+    }
+
+
+def _sum_point(value: int, start_ns: int, now_ns: int, attrs: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    point: dict[str, Any] = {
+        "startTimeUnixNano": str(start_ns),
+        "timeUnixNano": str(now_ns),
+        "asInt": str(value),
+    }
+    if attrs:
+        point["attributes"] = attrs
+    return point
+
+
+def _gauge_metric(name: str, description: str, unit: str, value: int, now_ns: int) -> dict[str, Any]:
+    return {
+        "name": name,
+        "description": description,
+        "unit": unit,
+        "gauge": {
+            "dataPoints": [
+                {
+                    "timeUnixNano": str(now_ns),
+                    "asInt": str(value),
+                }
+            ]
+        },
+    }
+
+
+def build_otlp_metrics_request(metrics: MetricsState, counters: Counters, now_unix_ns: int | None = None) -> dict[str, Any]:
+    """Build cumulative OTLP metrics with bounded label cardinality."""
+    now_ns = time.time_ns() if now_unix_ns is None else now_unix_ns
+    start_ns = metrics.start_unix_ns
+
+    backend_points = []
+    for (backend, result), value in sorted(metrics.backend_attempts.items()):
+        backend_points.append(
+            _sum_point(
+                value,
+                start_ns,
+                now_ns,
+                [_metric_attr("backend", backend), _metric_attr("result", result)],
+            )
+        )
+
+    completion_points = [
+        _sum_point(
+            value,
+            start_ns,
+            now_ns,
+            [_metric_attr("outcome", outcome)],
+        )
+        for outcome, value in sorted(metrics.completions.items())
+    ]
+
+    metric_docs = [
+        _sum_metric(
+            "shp.requests",
+            "Logical requests observed at first backend attempt",
+            "{request}",
+            [_sum_point(metrics.requests_total, start_ns, now_ns)],
+        ),
+        _sum_metric(
+            "shp.retries",
+            "Backend attempts after the first attempt",
+            "{retry}",
+            [_sum_point(metrics.retries_total, start_ns, now_ns)],
+        ),
+        _sum_metric(
+            "shp.backend.attempts",
+            "Backend attempts grouped by bounded backend and normalized result",
+            "{attempt}",
+            backend_points,
+        ),
+        _sum_metric(
+            "shp.requests.completed",
+            "Completed requests grouped by terminal outcome",
+            "{request}",
+            completion_points,
+        ),
+        _sum_metric(
+            "shp.telemetry.log_export_failures",
+            "OTLP log export failures observed by the bridge",
+            "{failure}",
+            [_sum_point(counters.export_failed, start_ns, now_ns)],
+        ),
+        _sum_metric(
+            "shp.telemetry.invalid_events",
+            "Invalid SHP frames or Phase 33 events observed by the bridge",
+            "{event}",
+            [_sum_point(counters.invalid, start_ns, now_ns)],
+        ),
+        _gauge_metric(
+            "shp.metrics.tracked_backends",
+            "Number of distinct backend label values tracked before overflow folding",
+            "{backend}",
+            metrics.tracked_backends,
+            now_ns,
+        ),
+    ]
+
+    return {
+        "resourceMetrics": [
+            {
+                "resource": {
+                    "attributes": [
+                        _attribute("service.name", "self-healing-proxy"),
+                        _attribute("service.namespace", "shp"),
+                        _attribute("telemetry.bridge", "phase35-otlp-metrics"),
+                    ]
+                },
+                "scopeMetrics": [
+                    {
+                        "scope": {"name": "self_healing_proxy.phase35", "version": "1"},
+                        "metrics": metric_docs,
+                    }
+                ],
+            }
+        ]
+    }
+
+
+def _metrics_endpoint(logs_endpoint: str, override: str | None = None) -> str:
+    if override:
+        endpoint = _validate_endpoint(override)
+        parsed = urllib.parse.urlparse(endpoint)
+        if parsed.path == "/v1/logs":
+            parsed = parsed._replace(path="/v1/metrics")
+            return urllib.parse.urlunparse(parsed)
+        return endpoint
+    parsed = urllib.parse.urlparse(_validate_endpoint(logs_endpoint))
+    parsed = parsed._replace(path="/v1/metrics")
+    return urllib.parse.urlunparse(parsed)
+
+
 def export_otlp_http(endpoint: str, request_doc: dict[str, Any], timeout_ms: int) -> tuple[bool, str]:
     payload = json.dumps(request_doc, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(
@@ -248,11 +456,13 @@ def prepare_listener(path_text: str) -> socket.socket:
 
 def run_bridge(args: argparse.Namespace) -> int:
     endpoint = _validate_endpoint(args.otlp_endpoint)
+    metrics_endpoint = _metrics_endpoint(endpoint, args.metrics_endpoint)
     counters = Counters()
+    metrics = MetricsState(max_backends=args.max_backend_labels)
     listener = prepare_listener(args.socket)
     print(
         f"PHASE34_OTEL_BRIDGE_READY path={args.socket} endpoint={endpoint} "
-        f"timeout_ms={args.request_timeout_ms}",
+        f"timeout_ms={args.request_timeout_ms} metrics_endpoint={metrics_endpoint}",
         flush=True,
     )
 
@@ -280,6 +490,7 @@ def run_bridge(args: argparse.Namespace) -> int:
                     try:
                         event = validate_phase33_event(json.loads(payload.decode("utf-8")))
                         otlp_request = build_otlp_logs_request(event)
+                        metrics.observe(event)
                     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                         counters.invalid += 1
                         print(f"PHASE34_INVALID_EVENT error={exc}", file=sys.stderr, flush=True)
@@ -303,7 +514,56 @@ def run_bridge(args: argparse.Namespace) -> int:
                         )
                         if args.require_export:
                             exit_code = 1
+
+                    if args.metrics_export_every > 0 and counters.received % args.metrics_export_every == 0:
+                        metrics_doc = build_otlp_metrics_request(metrics, counters)
+                        metrics_ok, metrics_detail = export_otlp_http(
+                            metrics_endpoint, metrics_doc, args.request_timeout_ms
+                        )
+                        if metrics_ok:
+                            counters.metrics_exported += 1
+                            print(
+                                f"PHASE35_METRICS_EXPORT_OK requests={metrics.requests_total} "
+                                f"retries={metrics.retries_total} tracked_backends={metrics.tracked_backends} "
+                                f"detail={metrics_detail}",
+                                flush=True,
+                            )
+                        else:
+                            counters.metrics_export_failed += 1
+                            print(
+                                f"PHASE35_METRICS_EXPORT_FAILED detail={metrics_detail}",
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                            if args.require_metrics_export:
+                                exit_code = 1
     finally:
+        if (
+            counters.received > 0
+            and args.metrics_export_every > 0
+            and counters.received % args.metrics_export_every != 0
+        ):
+            metrics_doc = build_otlp_metrics_request(metrics, counters)
+            metrics_ok, metrics_detail = export_otlp_http(
+                metrics_endpoint, metrics_doc, args.request_timeout_ms
+            )
+            if metrics_ok:
+                counters.metrics_exported += 1
+                print(
+                    f"PHASE35_METRICS_EXPORT_OK requests={metrics.requests_total} "
+                    f"retries={metrics.retries_total} tracked_backends={metrics.tracked_backends} "
+                    f"detail={metrics_detail}",
+                    flush=True,
+                )
+            else:
+                counters.metrics_export_failed += 1
+                print(
+                    f"PHASE35_METRICS_EXPORT_FAILED detail={metrics_detail}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                if args.require_metrics_export:
+                    exit_code = 1
         listener.close()
         try:
             Path(args.socket).unlink(missing_ok=True)
@@ -315,6 +575,11 @@ def run_bridge(args: argparse.Namespace) -> int:
     print(f"EXPORTED={counters.exported}", flush=True)
     print(f"EXPORT_FAILED={counters.export_failed}", flush=True)
     print(f"INVALID={counters.invalid}", flush=True)
+    print(f"METRICS_EXPORTED={counters.metrics_exported}", flush=True)
+    print(f"METRICS_EXPORT_FAILED={counters.metrics_export_failed}", flush=True)
+    print(f"METRIC_REQUESTS_TOTAL={metrics.requests_total}", flush=True)
+    print(f"METRIC_RETRIES_TOTAL={metrics.retries_total}", flush=True)
+    print(f"METRIC_TRACKED_BACKENDS={metrics.tracked_backends}", flush=True)
     return exit_code
 
 
@@ -327,6 +592,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--otlp-endpoint",
         default="http://127.0.0.1:4318/v1/logs",
         help="OTLP/HTTP logs endpoint (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--metrics-endpoint",
+        default=None,
+        help="OTLP/HTTP metrics endpoint; default derives /v1/metrics from --otlp-endpoint",
+    )
+    parser.add_argument(
+        "--metrics-export-every",
+        type=int,
+        default=DEFAULT_METRICS_EXPORT_EVERY,
+        help="export cumulative metrics every N received events; 0 disables metrics export",
+    )
+    parser.add_argument(
+        "--max-backend-labels",
+        type=int,
+        default=MAX_BACKEND_LABELS,
+        help="maximum distinct backend metric labels before folding to __other__",
     )
     parser.add_argument(
         "--request-timeout-ms",
@@ -343,7 +625,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--require-export",
         action="store_true",
-        help="exit nonzero if any OTLP export fails",
+        help="exit nonzero if any OTLP log export fails",
+    )
+    parser.add_argument(
+        "--require-metrics-export",
+        action="store_true",
+        help="exit nonzero if any OTLP metrics export fails",
     )
     return parser
 
@@ -355,6 +642,10 @@ def main() -> int:
         parser.error("--request-timeout-ms must be in 1..60000")
     if args.max_events < 0:
         parser.error("--max-events must be >= 0")
+    if args.metrics_export_every < 0:
+        parser.error("--metrics-export-every must be >= 0")
+    if args.max_backend_labels <= 0 or args.max_backend_labels > 1024:
+        parser.error("--max-backend-labels must be in 1..1024")
     try:
         _validate_endpoint(args.otlp_endpoint)
     except ValueError as exc:

@@ -91,6 +91,10 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	check-otel-bridge \
 	phase34-real \
 	phase34-gate \
+	check-otel-metrics \
+	test-otel-metrics \
+	phase35-real \
+	phase35-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -430,6 +434,7 @@ test-unit: \
 	python3 tests/unit/test_memory_pressure.py
 	python3 tests/unit/test_cpu_pressure.py
 	python3 tests/unit/test_otel_bridge.py
+	python3 tests/unit/test_otel_metrics.py
 	./$(IO_BUFFER_TEST)
 	./$(NONBLOCKING_TEST)
 	./$(CONNECTION_TEST)
@@ -473,6 +478,7 @@ test-integration: \
 	python3 tests/integration/test_trace_context_telemetry.py
 	python3 tests/integration/test_json_log_telemetry.py
 	python3 tests/integration/test_otel_collector_bridge.py
+	python3 tests/integration/test_otel_metrics.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -860,6 +866,26 @@ phase34-gate: $(JSON_LOG_LAB)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 34 gate passed: SHP JSON events converted to OTLP/HTTP, accepted by a real OpenTelemetry Collector, failure isolation, regressions, and sanitizers completed."
+
+check-otel-metrics:
+	python3 -m py_compile control-plane/otel_bridge.py tests/unit/test_otel_metrics.py tests/integration/test_otel_metrics.py
+
+test-otel-metrics:
+	$(MAKE) check-otel-metrics
+	python3 tests/unit/test_otel_metrics.py
+	python3 tests/integration/test_otel_metrics.py
+
+phase35-real:
+	PHASE35_REQUIRE_REAL=1 python3 tests/integration/test_otel_metrics.py
+
+phase35-gate:
+	$(MAKE) check-otel-metrics
+	python3 tests/unit/test_otel_metrics.py
+	python3 tests/integration/test_otel_metrics.py
+	PHASE35_REQUIRE_REAL=1 python3 tests/integration/test_otel_metrics.py
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 35 gate passed: bounded cumulative OTLP metrics, cardinality control, real Collector acceptance, failure isolation, regressions, and sanitizers completed."
 
 clean:
 	rm -rf build
