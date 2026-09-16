@@ -32,6 +32,8 @@ SANITIZED_TRACE_CONTEXT_LAB := build/trace_context_telemetry_lab-sanitized
 JSON_LOG_LAB := build/json_log_telemetry_lab
 JSON_LOG_TEST := build/test_json_log
 SANITIZED_JSON_LOG_LAB := build/json_log_telemetry_lab-sanitized
+TRACE_SPAN_LAB := build/trace_span_telemetry_lab
+SANITIZED_TRACE_SPAN_LAB := build/trace_span_telemetry_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
 NONBLOCKING_TEST := build/test_nonblocking
@@ -95,6 +97,11 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	test-otel-metrics \
 	phase35-real \
 	phase35-gate \
+	check-otel-traces \
+	test-otel-traces \
+	sanitize-otel-traces \
+	phase36-real \
+	phase36-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -232,6 +239,15 @@ $(JSON_LOG_TEST): tests/unit/test_json_log.c src/json_log.c src/trace_context.c 
 		src/json_log.c \
 		src/trace_context.c \
 		-o $(JSON_LOG_TEST)
+
+$(TRACE_SPAN_LAB): src/trace_span_telemetry_lab.c src/trace_context.c src/telemetry_channel.c src/ipc_frame.c include/trace_context.h include/telemetry_channel.h include/ipc_frame.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		src/trace_span_telemetry_lab.c \
+		src/trace_context.c \
+		src/telemetry_channel.c \
+		src/ipc_frame.c \
+		-o $(TRACE_SPAN_LAB)
 
 $(TCP_LISTENER): \
 	src/tcp_listener.c \
@@ -889,3 +905,34 @@ phase35-gate:
 
 clean:
 	rm -rf build
+
+
+check-otel-traces:
+	python3 -m py_compile control-plane/otel_bridge.py tests/unit/test_otel_traces.py tests/integration/test_otel_traces.py
+
+test-otel-traces: $(TRACE_SPAN_LAB) check-otel-traces
+	python3 tests/unit/test_otel_traces.py
+	python3 tests/integration/test_otel_traces.py
+
+phase36-real: $(TRACE_SPAN_LAB) check-otel-traces
+	PHASE36_REQUIRE_REAL=1 python3 tests/integration/test_otel_traces.py
+
+phase36-gate: $(TRACE_SPAN_LAB) check-otel-traces
+	python3 tests/unit/test_otel_traces.py
+	python3 tests/integration/test_otel_traces.py
+	PHASE36_REQUIRE_REAL=1 python3 tests/integration/test_otel_traces.py
+	$(MAKE) sanitize-otel-traces
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 36 gate passed: parented OTLP request/backend spans, monotonic timing, remote-parent propagation, real Collector acceptance, failure isolation, regressions, and sanitizers completed."
+
+
+sanitize-otel-traces:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		src/trace_span_telemetry_lab.c \
+		src/trace_context.c \
+		src/telemetry_channel.c \
+		src/ipc_frame.c \
+		-o $(SANITIZED_TRACE_SPAN_LAB)
+	TRACE_SPAN_LAB_BIN=$(SANITIZED_TRACE_SPAN_LAB) python3 tests/integration/test_otel_traces.py

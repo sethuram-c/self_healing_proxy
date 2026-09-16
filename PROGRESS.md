@@ -1833,7 +1833,7 @@ Phase 35 — Metrics: define bounded counters/gauges/histograms for request volu
 
 ## Phase 35 — Metrics
 
-Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -1877,11 +1877,60 @@ Phase 35 defines and exports operational counters/gauges that can be derived fai
 - fake OTLP `/v1/metrics` export: PASS in assistant validation
 - metrics-export failure isolation: PASS in assistant validation
 - Phase 34 log-export regression compatibility: PASS in assistant validation
-- real OpenTelemetry Collector metrics acceptance: PENDING LOCAL FEDORA RUN
-- complete project `make test`: PENDING LOCAL FEDORA RUN
-- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
-- `make phase35-gate`: PENDING LOCAL FEDORA RUN
+- real OpenTelemetry Collector metrics acceptance: PASS on Fedora
+- complete project `make test`: PASS on Fedora
+- complete project `make sanitize`: PASS on Fedora
+- `make phase35-gate`: PASS on Fedora
 
 ### Next Phase
 
 Phase 36 — Traces: export completed request/backend-attempt spans with correct parentage and retry structure using the Phase 32 correlation context.
+
+## Phase 36 — Traces
+
+Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+
+### Concepts Learned
+
+- Correlation IDs become real trace structure only when exported as OTLP spans with explicit parent/child relationships and start/end timestamps.
+- The logical proxy request is represented as one SERVER span. Each backend attempt is a CLIENT child span with the same trace ID and a unique span ID.
+- A valid incoming W3C `traceparent` becomes the parent of the local request span; locally generated traces have no parent span.
+- Retry attempts are separate child spans, not separate traces. Failed/retried attempts carry ERROR status while the terminal successful attempt carries OK status.
+- Duration is measured with `CLOCK_MONOTONIC`; wall-clock OTLP timestamps are derived from one `CLOCK_REALTIME` + `CLOCK_MONOTONIC` anchor pair so NTP/time adjustments do not corrupt duration measurement.
+- Trace export uses OTLP/HTTP `/v1/traces` through the same external bridge boundary and remains isolated from the proxy's request-serving correctness path.
+- A trace-export HTTP failure is observable but non-fatal by default; only the explicit quality-gate option requires successful export.
+
+### Implementation
+
+- `src/trace_span_telemetry_lab.c`: creates one completed logical request trace, measures backend-attempt durations with `CLOCK_MONOTONIC`, preserves remote parentage, and emits one bounded `shp.trace.v1` batch through the Phase 31 telemetry channel.
+- `control-plane/otel_bridge.py`: validates `shp.trace.v1`, maps request/attempt spans to native OTLP traces, derives `/v1/traces`, exports trace batches, and records trace-export counters without regressing Phase 34 logs or Phase 35 metrics.
+- `observability/otel-collector-config.yaml`: adds a native traces pipeline alongside logs and metrics.
+- `tests/unit/test_otel_traces.py`: validates OTLP span kind/status mapping, trace ID continuity, remote-parent propagation, parentage rules, timing validation, and traces-endpoint derivation.
+- `tests/integration/test_otel_traces.py`: validates C lab -> SHP frame -> bridge -> OTLP traces, retry hierarchy, remote W3C parentage, trace-export failure isolation, socket cleanup, and real Collector acceptance.
+- `Makefile`: adds `trace_span_telemetry_lab`, `check-otel-traces`, `test-otel-traces`, `sanitize-otel-traces`, `phase36-real`, and `phase36-gate`.
+
+### Phase Boundary
+
+Phase 36 proves native trace/span export and retry parentage. It does not add dashboards or trace storage/query UI; Phase 37 owns Grafana visualization. Phase 38 later measures telemetry overhead and failure behavior.
+
+### Quality Gate
+
+- strict C trace-lab build: PASS in assistant validation
+- trace mapping unit tests: PASS in assistant validation
+- request SERVER span + backend CLIENT child spans: PASS in assistant validation
+- same trace ID / unique span IDs: PASS in assistant validation
+- retry/error + terminal success status mapping: PASS in assistant validation
+- remote W3C parent propagation: PASS in assistant validation
+- monotonic duration + derived wall timestamp validation: PASS in assistant validation
+- fake `/v1/traces` export: PASS in assistant validation
+- trace HTTP 503 failure isolation: PASS in assistant validation
+- ASan/UBSan trace-lab integration: PASS in assistant validation
+- Phase 34/35 bridge regressions: PASS in assistant validation
+- real OpenTelemetry Collector trace acceptance: PENDING LOCAL FEDORA RUN
+- complete project `make test`: PENDING LOCAL FEDORA RUN
+- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
+- `make phase36-gate`: PENDING LOCAL FEDORA RUN
+
+### Next Phase
+
+Phase 37 — Grafana: visualize logs, metrics, and traces with an operator-facing dashboard while preserving signal correlation.

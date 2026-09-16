@@ -744,3 +744,32 @@ Phase 35 gate passed: bounded cumulative OTLP metrics, cardinality control, real
 
 Phase 35 deliberately does not invent latency histograms from log timestamps. Request latency
 must be measured from a monotonic duration source before it is exported as a histogram.
+
+
+## Phase 36: Native OTLP Traces
+
+Phase 36 turns the request/trace/span identifiers introduced in Phase 32 into real OpenTelemetry spans. A completed trace contains one `proxy.request` SERVER span and one `proxy.backend_attempt` CLIENT child span per backend attempt. The attempt spans retain the logical request's trace ID, use unique span IDs, and make retry structure explicit.
+
+The trace lab measures duration with `CLOCK_MONOTONIC`, then derives OTLP wall timestamps from a single realtime/monotonic anchor pair. This prevents wall-clock adjustments from corrupting duration while still producing absolute OTLP timestamps. A valid incoming W3C `traceparent` becomes the parent of the local request span.
+
+Build and run the fast tests:
+
+```bash
+make build/trace_span_telemetry_lab
+make test-otel-traces
+make sanitize-otel-traces
+```
+
+Run the required real Collector test and full gate:
+
+```bash
+make otel-collector-pull
+make phase36-real
+make phase36-gate
+```
+
+The required final marker is:
+
+```text
+Phase 36 gate passed: parented OTLP request/backend spans, monotonic timing, remote-parent propagation, real Collector acceptance, failure isolation, regressions, and sanitizers completed.
+```
