@@ -1888,7 +1888,7 @@ Phase 36 — Traces: export completed request/backend-attempt spans with correct
 
 ## Phase 36 — Traces
 
-Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -1926,11 +1926,58 @@ Phase 36 proves native trace/span export and retry parentage. It does not add da
 - trace HTTP 503 failure isolation: PASS in assistant validation
 - ASan/UBSan trace-lab integration: PASS in assistant validation
 - Phase 34/35 bridge regressions: PASS in assistant validation
-- real OpenTelemetry Collector trace acceptance: PENDING LOCAL FEDORA RUN
-- complete project `make test`: PENDING LOCAL FEDORA RUN
-- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
-- `make phase36-gate`: PENDING LOCAL FEDORA RUN
+- real OpenTelemetry Collector trace acceptance: PASS on Fedora
+- complete project `make test`: PASS on Fedora
+- complete project `make sanitize`: PASS on Fedora
+- `make phase36-gate`: PASS on Fedora
 
 ### Next Phase
 
 Phase 37 — Grafana: visualize logs, metrics, and traces with an operator-facing dashboard while preserving signal correlation.
+
+
+## Phase 37 — Grafana
+
+Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+
+### Concepts Learned
+
+- Grafana is the operator-facing query/visualization layer; it does not belong in the proxy request-serving correctness path.
+- Phase 37 uses Grafana's pinned `grafana/otel-lgtm` development image to provide Grafana, Prometheus, Loki, Tempo, and an OTLP Collector in one reproducible lab container.
+- Existing OTLP logs, metrics, and traces are sent unchanged to the LGTM OTLP/HTTP receiver; Phase 37 does not invent a fourth telemetry protocol.
+- Grafana data sources are treated as code and verified by stable UIDs: `prometheus`, `loki`, and `tempo`.
+- The dashboard scopes logs/traces to `service.name=self-healing-proxy` and avoids request/trace/span IDs as metric dimensions.
+- Cross-signal correlation remains identity-based: logs retain trace IDs, Tempo stores the native trace tree, and Prometheus holds bounded aggregates.
+- A dashboard being visually attractive is not enough; the gate queries all three real backends through Grafana's data-source proxy and proves telemetry is actually searchable.
+- The `grafana/otel-lgtm` image is intentionally a development/demo/test backend rather than a production deployment model.
+
+### Implementation
+
+- `scripts/grafana_lgtm_lab.sh`: Podman/Docker lifecycle wrapper around pinned `docker.io/grafana/otel-lgtm:0.36.0`, exposing deterministic localhost ports and mounting the project dashboard as code.
+- `observability/grafana/provisioning/dashboards/shp.yaml`: file-based Grafana dashboard provider.
+- `observability/grafana/dashboards/self-healing-proxy-overview.json`: provisioned overview with request/retry stats, backend-attempt metrics, correlated Loki logs, Tempo trace search, and an operator correlation note.
+- `tests/unit/test_grafana_dashboard.py`: validates dashboard identity, panel/data-source coverage, bounded metric-query dimensions, service scoping, and pinned lab image.
+- `tests/integration/test_grafana_lgtm.py`: starts the real LGTM container when required, verifies Grafana/data sources/dashboard, emits Phase 33 logs+metrics and Phase 36 traces, and queries Prometheus/Loki/Tempo through Grafana.
+- `Makefile`: adds lifecycle helpers, fast validation, `phase37-real`, and `phase37-gate`.
+
+### Phase Boundary
+
+Phase 37 proves that the three native observability signals are queryable and correlated in an operator-facing Grafana environment. It does not yet benchmark telemetry cost or deliberately overload/kill observability components; Phase 38 owns telemetry overhead and failure characterization.
+
+### Quality Gate
+
+- dashboard JSON/provisioning validation: PASS in assistant validation
+- pinned LGTM lifecycle shell syntax: PASS in assistant validation
+- dashboard unit tests: PASS in assistant validation
+- default integration test skip behavior: PASS in assistant validation
+- real Grafana health/data sources/dashboard: PENDING LOCAL FEDORA RUN
+- real Prometheus query through Grafana: PENDING LOCAL FEDORA RUN
+- real Loki query through Grafana: PENDING LOCAL FEDORA RUN
+- real Tempo query through Grafana: PENDING LOCAL FEDORA RUN
+- complete project `make test`: PENDING LOCAL FEDORA RUN
+- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
+- `make phase37-gate`: PENDING LOCAL FEDORA RUN
+
+### Next Phase
+
+Phase 38 — Telemetry overhead and failure behavior: quantify latency/CPU/memory impact, force slow/dead observability components, and close Stage 4 with explicit failure-budget evidence.

@@ -773,3 +773,39 @@ The required final marker is:
 ```text
 Phase 36 gate passed: parented OTLP request/backend spans, monotonic timing, remote-parent propagation, real Collector acceptance, failure isolation, regressions, and sanitizers completed.
 ```
+
+
+## Phase 37 — Grafana operator view
+
+Phase 37 adds a reproducible local Grafana/Loki/Prometheus/Tempo environment on top of the native OTLP logs, metrics, and traces completed in Phases 34–36. The lab uses pinned `docker.io/grafana/otel-lgtm:0.36.0` and keeps the dashboard in version control. The real gate captures the exact `TRACE_ID` emitted by the Phase 36 lab and retrieves that specific trace through Grafana's Tempo datasource proxy (`/api/traces/<traceID>`), avoiding search-index timing and endpoint-compatibility differences.
+
+Start it with:
+
+```bash
+make grafana-lgtm-pull
+make grafana-lgtm-start
+```
+
+Grafana is exposed at `http://127.0.0.1:13000` (admin/admin for this disposable lab) and OTLP/HTTP at `http://127.0.0.1:14319`. The dashboard UID is `shp-overview`.
+
+The provisioned dashboard shows logical requests, retries, backend attempts grouped by bounded labels, service-scoped Loki logs, and recent Tempo traces. Grafana's built-in LGTM data sources use the stable UIDs `prometheus`, `loki`, and `tempo`, preserving cross-signal navigation.
+
+Fast validation:
+
+```bash
+make test-grafana
+```
+
+Required real-stack validation:
+
+```bash
+make phase37-real
+```
+
+Full phase closure:
+
+```bash
+make phase37-gate
+```
+
+The real integration gate starts the pinned stack, verifies Grafana and the provisioned dashboard, sends Phase 33 log/metric telemetry and a Phase 36 trace, then queries Prometheus, Loki, and Tempo through Grafana's data-source proxy. Grafana remains outside the proxy correctness path; if the visualization stack is unavailable, the Phase 31 bounded local telemetry policy still protects request forwarding.

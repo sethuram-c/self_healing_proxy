@@ -102,6 +102,13 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	sanitize-otel-traces \
 	phase36-real \
 	phase36-gate \
+	grafana-lgtm-pull \
+	grafana-lgtm-start \
+	grafana-lgtm-stop \
+	check-grafana \
+	test-grafana \
+	phase37-real \
+	phase37-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -451,6 +458,7 @@ test-unit: \
 	python3 tests/unit/test_cpu_pressure.py
 	python3 tests/unit/test_otel_bridge.py
 	python3 tests/unit/test_otel_metrics.py
+	python3 tests/unit/test_grafana_dashboard.py
 	./$(IO_BUFFER_TEST)
 	./$(NONBLOCKING_TEST)
 	./$(CONNECTION_TEST)
@@ -469,7 +477,8 @@ test-integration: \
 	$(IPC_FRAMED_SERVER) \
 	$(TELEMETRY_LAB) \
 	$(TRACE_CONTEXT_LAB) \
-	$(JSON_LOG_LAB)
+	$(JSON_LOG_LAB) \
+	$(TRACE_SPAN_LAB)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -495,6 +504,7 @@ test-integration: \
 	python3 tests/integration/test_json_log_telemetry.py
 	python3 tests/integration/test_otel_collector_bridge.py
 	python3 tests/integration/test_otel_metrics.py
+	python3 tests/integration/test_grafana_lgtm.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -936,3 +946,33 @@ sanitize-otel-traces:
 		src/ipc_frame.c \
 		-o $(SANITIZED_TRACE_SPAN_LAB)
 	TRACE_SPAN_LAB_BIN=$(SANITIZED_TRACE_SPAN_LAB) python3 tests/integration/test_otel_traces.py
+
+
+grafana-lgtm-pull:
+	./scripts/grafana_lgtm_lab.sh pull
+
+grafana-lgtm-start:
+	./scripts/grafana_lgtm_lab.sh start
+
+grafana-lgtm-stop:
+	./scripts/grafana_lgtm_lab.sh stop
+
+check-grafana:
+	python3 -m py_compile tests/unit/test_grafana_dashboard.py tests/integration/test_grafana_lgtm.py
+	python3 -m json.tool observability/grafana/dashboards/self-healing-proxy-overview.json >/dev/null
+	bash -n scripts/grafana_lgtm_lab.sh
+
+test-grafana: $(JSON_LOG_LAB) $(TRACE_SPAN_LAB) check-grafana
+	python3 tests/unit/test_grafana_dashboard.py
+	python3 tests/integration/test_grafana_lgtm.py
+
+phase37-real: $(JSON_LOG_LAB) $(TRACE_SPAN_LAB) check-grafana
+	PHASE37_REQUIRE_REAL=1 python3 tests/integration/test_grafana_lgtm.py
+
+phase37-gate: $(JSON_LOG_LAB) $(TRACE_SPAN_LAB) check-grafana
+	python3 tests/unit/test_grafana_dashboard.py
+	python3 tests/integration/test_grafana_lgtm.py
+	PHASE37_REQUIRE_REAL=1 python3 tests/integration/test_grafana_lgtm.py
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 37 gate passed: provisioned Grafana dashboard queries real Loki/Prometheus/Tempo signals through pinned LGTM, with correlations, regressions, and sanitizers completed."
