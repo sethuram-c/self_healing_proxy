@@ -777,7 +777,7 @@ Phase 36 gate passed: parented OTLP request/backend spans, monotonic timing, rem
 
 ## Phase 37 — Grafana operator view
 
-Phase 37 adds a reproducible local Grafana/Loki/Prometheus/Tempo environment on top of the native OTLP logs, metrics, and traces completed in Phases 34–36. The lab uses pinned `docker.io/grafana/otel-lgtm:0.36.0` and keeps the dashboard in version control. The real gate captures the exact `TRACE_ID` emitted by the Phase 36 lab and retrieves that specific trace through Grafana's Tempo datasource proxy (`/api/traces/<traceID>`), avoiding search-index timing and endpoint-compatibility differences.
+Phase 37 adds a reproducible local Grafana/Loki/Prometheus/Tempo environment on top of the native OTLP logs, metrics, and traces completed in Phases 34–36. The lab uses pinned `docker.io/grafana/otel-lgtm:0.36.0` and keeps the dashboard in version control. The real gate captures the exact `TRACE_ID` emitted by the Phase 36 lab and retrieves that specific trace through Grafana's Tempo datasource backend query API (`POST /api/ds/query` with `queryType=traceId`), avoiding search-index timing and endpoint-compatibility differences.
 
 Start it with:
 
@@ -809,3 +809,43 @@ make phase37-gate
 ```
 
 The real integration gate starts the pinned stack, verifies Grafana and the provisioned dashboard, sends Phase 33 log/metric telemetry and a Phase 36 trace, then queries Prometheus, Loki, and Tempo through Grafana's data-source proxy. Grafana remains outside the proxy correctness path; if the visualization stack is unavailable, the Phase 31 bounded local telemetry policy still protects request forwarding.
+
+
+## Phase 38 — Telemetry overhead and failure closure
+
+Phase 38 closes Stage 4 by measuring the local telemetry producer boundary instead of assuming observability is free. The new `telemetry_overhead_lab` uses monotonic wall time, process CPU time, current RSS, queue occupancy, drop counters, and `EAGAIN` evidence to characterize four modes: telemetry disabled, collector missing, collector draining normally, and collector connected but stalled.
+
+The key rule is that observability may lose data under pressure, but it must remain bounded and must not turn an unavailable collector into request-path blocking. The Phase 38 gate therefore enforces generous failure budgets rather than chasing benchmark-record numbers:
+
+- missing collector: producer wall cost <= 50 us/event;
+- draining collector: producer wall cost <= 100 us/event;
+- stalled collector: producer wall cost <= 100 us/event;
+- stalled queue occupancy never exceeds the configured 64 KiB cap;
+- stalled delivery must produce drops and `EAGAIN`/would-block evidence rather than waiting;
+- measured RSS growth across the benchmark scenarios must remain <= 16 MiB.
+
+Build and run the targeted tests:
+
+```bash
+make build/telemetry_overhead_lab
+make test-telemetry-overhead
+make benchmark-telemetry-overhead
+make sanitize-telemetry-overhead
+```
+
+The benchmark prints medians rather than using a single noisy sample. `DISABLED_MEDIAN_WALL_NS_PER_EVENT` is a reference baseline; the gate is based on absolute producer budgets because ratios against an extremely small disabled loop are unstable and misleading.
+
+The Stage 4 closure gate is:
+
+```bash
+make phase38-gate
+```
+
+It reruns the measured failure-budget tests, the benchmark report, the real Phase 37 Grafana/Loki/Prometheus/Tempo query test, the complete regression suite, and sanitizers. Required final markers:
+
+```text
+Phase 38 gate passed: telemetry latency/CPU/memory budgets, bounded slow/dead collector behavior, real cross-signal observability, regressions, and sanitizers completed.
+Stage 4 gate passed: nonblocking IPC, correlation, structured logs, OpenTelemetry logs/metrics/traces, Grafana, and measured failure-isolated observability completed.
+```
+
+Phase 38 deliberately measures the local producer/queue boundary, not Grafana rendering latency or remote backend response time. That keeps the measurement tied to the performance risk that can actually affect the proxy.

@@ -34,6 +34,8 @@ JSON_LOG_TEST := build/test_json_log
 SANITIZED_JSON_LOG_LAB := build/json_log_telemetry_lab-sanitized
 TRACE_SPAN_LAB := build/trace_span_telemetry_lab
 SANITIZED_TRACE_SPAN_LAB := build/trace_span_telemetry_lab-sanitized
+TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab
+SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
 NONBLOCKING_TEST := build/test_nonblocking
@@ -109,6 +111,11 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	test-grafana \
 	phase37-real \
 	phase37-gate \
+	check-telemetry-overhead \
+	test-telemetry-overhead \
+	benchmark-telemetry-overhead \
+	sanitize-telemetry-overhead \
+	phase38-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -131,6 +138,7 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	sanitize-nonblocking-telemetry \
 	sanitize-trace-context \
 	sanitize-json-logs \
+	sanitize-telemetry-overhead \
 	sanitize-tcp \
 	sanitize-epoll \
 	benchmark \
@@ -255,6 +263,14 @@ $(TRACE_SPAN_LAB): src/trace_span_telemetry_lab.c src/trace_context.c src/teleme
 		src/telemetry_channel.c \
 		src/ipc_frame.c \
 		-o $(TRACE_SPAN_LAB)
+
+$(TELEMETRY_OVERHEAD_LAB): src/telemetry_overhead_lab.c src/telemetry_channel.c src/ipc_frame.c include/telemetry_channel.h include/ipc_frame.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		src/telemetry_overhead_lab.c \
+		src/telemetry_channel.c \
+		src/ipc_frame.c \
+		-o $(TELEMETRY_OVERHEAD_LAB)
 
 $(TCP_LISTENER): \
 	src/tcp_listener.c \
@@ -478,7 +494,8 @@ test-integration: \
 	$(TELEMETRY_LAB) \
 	$(TRACE_CONTEXT_LAB) \
 	$(JSON_LOG_LAB) \
-	$(TRACE_SPAN_LAB)
+	$(TRACE_SPAN_LAB) \
+	$(TELEMETRY_OVERHEAD_LAB)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -505,6 +522,7 @@ test-integration: \
 	python3 tests/integration/test_otel_collector_bridge.py
 	python3 tests/integration/test_otel_metrics.py
 	python3 tests/integration/test_grafana_lgtm.py
+	python3 tests/integration/test_telemetry_overhead.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -655,6 +673,15 @@ sanitize-json-logs:
 		-o $(SANITIZED_JSON_LOG_LAB)
 	JSON_LOG_LAB_BIN=$(SANITIZED_JSON_LOG_LAB) python3 tests/integration/test_json_log_telemetry.py
 
+sanitize-telemetry-overhead:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		src/telemetry_overhead_lab.c \
+		src/telemetry_channel.c \
+		src/ipc_frame.c \
+		-o $(SANITIZED_TELEMETRY_OVERHEAD_LAB)
+	TELEMETRY_OVERHEAD_LAB_BIN=$(SANITIZED_TELEMETRY_OVERHEAD_LAB) python3 tests/integration/test_telemetry_overhead.py
+
 sanitize-tcp:
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
@@ -711,6 +738,7 @@ sanitize: \
 	sanitize-nonblocking-telemetry \
 	sanitize-trace-context \
 	sanitize-json-logs \
+	sanitize-telemetry-overhead \
 	sanitize-tcp \
 	sanitize-epoll
 
@@ -976,3 +1004,20 @@ phase37-gate: $(JSON_LOG_LAB) $(TRACE_SPAN_LAB) check-grafana
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 37 gate passed: provisioned Grafana dashboard queries real Loki/Prometheus/Tempo signals through pinned LGTM, with correlations, regressions, and sanitizers completed."
+check-telemetry-overhead:
+	python3 -m py_compile tests/integration/test_telemetry_overhead.py scripts/phase38_telemetry_benchmark.py
+
+test-telemetry-overhead: $(TELEMETRY_OVERHEAD_LAB) check-telemetry-overhead
+	python3 tests/integration/test_telemetry_overhead.py
+
+benchmark-telemetry-overhead: $(TELEMETRY_OVERHEAD_LAB) check-telemetry-overhead
+	python3 scripts/phase38_telemetry_benchmark.py
+
+phase38-gate: $(TELEMETRY_OVERHEAD_LAB) check-telemetry-overhead
+	python3 tests/integration/test_telemetry_overhead.py
+	python3 scripts/phase38_telemetry_benchmark.py
+	PHASE37_REQUIRE_REAL=1 python3 tests/integration/test_grafana_lgtm.py
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 38 gate passed: telemetry latency/CPU/memory budgets, bounded slow/dead collector behavior, real cross-signal observability, regressions, and sanitizers completed."
+	@echo "Stage 4 gate passed: nonblocking IPC, correlation, structured logs, OpenTelemetry logs/metrics/traces, Grafana, and measured failure-isolated observability completed."
