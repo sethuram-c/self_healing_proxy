@@ -35,6 +35,10 @@ SANITIZED_JSON_LOG_LAB := build/json_log_telemetry_lab-sanitized
 TRACE_SPAN_LAB := build/trace_span_telemetry_lab
 SANITIZED_TRACE_SPAN_LAB := build/trace_span_telemetry_lab-sanitized
 TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab
+HEALTH_STATE_LAB := build/health_state_lab
+BACKEND_HEALTH_TEST := build/test_backend_health
+SANITIZED_HEALTH_STATE_LAB := build/health_state_lab-sanitized
+SANITIZED_BACKEND_HEALTH_TEST := build/test_backend_health-sanitized
 SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
@@ -116,6 +120,10 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	benchmark-telemetry-overhead \
 	sanitize-telemetry-overhead \
 	phase38-gate \
+	test-backend-health \
+	health-state-lab \
+	sanitize-backend-health \
+	phase39-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -139,6 +147,7 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	sanitize-trace-context \
 	sanitize-json-logs \
 	sanitize-telemetry-overhead \
+	sanitize-backend-health \
 	sanitize-tcp \
 	sanitize-epoll \
 	benchmark \
@@ -173,6 +182,20 @@ $(MEMORY_PRESSURE): src/memory_pressure.c
 $(CPU_PRESSURE): src/cpu_pressure.c
 	mkdir -p build
 	$(CC) $(CFLAGS) src/cpu_pressure.c -o $(CPU_PRESSURE)
+
+$(BACKEND_HEALTH_TEST): tests/unit/test_backend_health.c src/backend_health.c include/backend_health.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		tests/unit/test_backend_health.c \
+		src/backend_health.c \
+		-o $(BACKEND_HEALTH_TEST)
+
+$(HEALTH_STATE_LAB): src/health_state_lab.c src/backend_health.c include/backend_health.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		src/health_state_lab.c \
+		src/backend_health.c \
+		-o $(HEALTH_STATE_LAB)
 
 $(UDS_SERVER): src/uds_server.c src/uds.c include/uds.h
 	mkdir -p build
@@ -465,7 +488,8 @@ test-unit: \
 	$(IPC_FRAME_TEST) \
 	$(TELEMETRY_CHANNEL_TEST) \
 	$(TRACE_CONTEXT_TEST) \
-	$(JSON_LOG_TEST)
+	$(JSON_LOG_TEST) \
+	$(BACKEND_HEALTH_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -485,6 +509,7 @@ test-unit: \
 	./$(TELEMETRY_CHANNEL_TEST)
 	./$(TRACE_CONTEXT_TEST)
 	./$(JSON_LOG_TEST)
+	./$(BACKEND_HEALTH_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
@@ -495,7 +520,8 @@ test-integration: \
 	$(TRACE_CONTEXT_LAB) \
 	$(JSON_LOG_LAB) \
 	$(TRACE_SPAN_LAB) \
-	$(TELEMETRY_OVERHEAD_LAB)
+	$(TELEMETRY_OVERHEAD_LAB) \
+	$(HEALTH_STATE_LAB)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -523,6 +549,7 @@ test-integration: \
 	python3 tests/integration/test_otel_metrics.py
 	python3 tests/integration/test_grafana_lgtm.py
 	python3 tests/integration/test_telemetry_overhead.py
+	python3 tests/integration/test_health_state_lab.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -739,6 +766,7 @@ sanitize: \
 	sanitize-trace-context \
 	sanitize-json-logs \
 	sanitize-telemetry-overhead \
+	sanitize-backend-health \
 	sanitize-tcp \
 	sanitize-epoll
 
@@ -1021,3 +1049,26 @@ phase38-gate: $(TELEMETRY_OVERHEAD_LAB) check-telemetry-overhead
 	$(MAKE) sanitize
 	@echo "Phase 38 gate passed: telemetry latency/CPU/memory budgets, bounded slow/dead collector behavior, real cross-signal observability, regressions, and sanitizers completed."
 	@echo "Stage 4 gate passed: nonblocking IPC, correlation, structured logs, OpenTelemetry logs/metrics/traces, Grafana, and measured failure-isolated observability completed."
+
+
+health-state-lab: $(HEALTH_STATE_LAB)
+	./$(HEALTH_STATE_LAB) --scenario trip-recover
+
+test-backend-health: $(BACKEND_HEALTH_TEST) $(HEALTH_STATE_LAB)
+	./$(BACKEND_HEALTH_TEST)
+	python3 tests/integration/test_health_state_lab.py
+
+sanitize-backend-health:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude tests/unit/test_backend_health.c src/backend_health.c -o $(SANITIZED_BACKEND_HEALTH_TEST)
+	./$(SANITIZED_BACKEND_HEALTH_TEST)
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude src/health_state_lab.c src/backend_health.c -o $(SANITIZED_HEALTH_STATE_LAB)
+	HEALTH_STATE_LAB_BIN=$(SANITIZED_HEALTH_STATE_LAB) python3 tests/integration/test_health_state_lab.py
+
+phase39-gate: $(BACKEND_HEALTH_TEST) $(HEALTH_STATE_LAB)
+	./$(BACKEND_HEALTH_TEST)
+	python3 tests/integration/test_health_state_lab.py
+	$(MAKE) sanitize-backend-health
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 39 gate passed: explicit backend health states, hysteretic failure/recovery transitions, deterministic timing, regressions, and sanitizers completed."

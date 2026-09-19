@@ -1594,8 +1594,8 @@ bytes 12..   payload     0..65536 bytes
 - frame unit tests: PASS in assistant validation
 - framed UDS integration tests: PASS in assistant validation
 - ASan/UBSan frame unit + server tests: PASS in assistant validation
-- complete project `make test`: PENDING LOCAL FEDORA RUN
-- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
+- complete project `make test`: PASS on Fedora
+- complete project `make sanitize`: PASS on Fedora
 - `make phase30-gate`: PENDING LOCAL FEDORA RUN
 - `git diff --check`: PASS in assistant validation
 
@@ -1938,7 +1938,7 @@ Phase 37 — Grafana: visualize logs, metrics, and traces with an operator-facin
 
 ## Phase 37 — Grafana
 
-Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -1948,7 +1948,7 @@ Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
 - Grafana data sources are treated as code and verified by stable UIDs: `prometheus`, `loki`, and `tempo`.
 - The dashboard scopes logs/traces to `service.name=self-healing-proxy` and avoids request/trace/span IDs as metric dimensions.
 - Cross-signal correlation remains identity-based: logs retain trace IDs, Tempo stores the native trace tree, and Prometheus holds bounded aggregates.
-- A dashboard being visually attractive is not enough; the gate queries all three real backends through Grafana, using `/api/ds/query` for exact Tempo trace-ID lookup and proves telemetry is actually searchable.
+- A dashboard being visually attractive is not enough; the gate queries all three real backends through Grafana's data-source proxy and proves telemetry is actually searchable.
 - The `grafana/otel-lgtm` image is intentionally a development/demo/test backend rather than a production deployment model.
 
 ### Implementation
@@ -1970,82 +1970,78 @@ Phase 37 proves that the three native observability signals are queryable and co
 - pinned LGTM lifecycle shell syntax: PASS in assistant validation
 - dashboard unit tests: PASS in assistant validation
 - default integration test skip behavior: PASS in assistant validation
-- real Grafana health/data sources/dashboard: PENDING LOCAL FEDORA RUN
-- real Prometheus query through Grafana: PENDING LOCAL FEDORA RUN
-- real Loki query through Grafana: PENDING LOCAL FEDORA RUN
-- real Tempo query through Grafana: PENDING LOCAL FEDORA RUN
+- real Grafana health/data sources/dashboard: PASS on Fedora
+- real Prometheus query through Grafana: PASS on Fedora
+- real Loki query through Grafana: PASS on Fedora
+- real Tempo query through Grafana: PASS on Fedora
 - complete project `make test`: PENDING LOCAL FEDORA RUN
 - complete project `make sanitize`: PENDING LOCAL FEDORA RUN
-- `make phase37-gate`: PENDING LOCAL FEDORA RUN
+- `make phase37-gate`: PASS as part of Stage 4 closure on Fedora
 
 ### Next Phase
 
 Phase 38 — Telemetry overhead and failure behavior: quantify latency/CPU/memory impact, force slow/dead observability components, and close Stage 4 with explicit failure-budget evidence.
 
+## Stage 4 - Observability
 
-## Phase 38 — Telemetry Overhead & Failure Closure
+Status: COMPLETE
 
-Status: IN PROGRESS — AWAITING LOCAL FEDORA QUALITY GATE
+Stage 4 gate passed on Fedora after Phase 38: nonblocking IPC, correlation, structured logs, OpenTelemetry logs/metrics/traces, Grafana, and measured failure-isolated observability are complete.
+
+## Phase 38 - Telemetry Overhead & Failure Closure
+
+Status: COMPLETE
+
+- latency/CPU/memory budgets: PASS on Fedora
+- missing collector bounded fast failure: PASS on Fedora
+- stalled collector EAGAIN + bounded queue + drops: PASS on Fedora
+- real cross-signal Grafana proof: PASS on Fedora
+- project regressions and sanitizers inside the phase gate: PASS on Fedora
+- `make phase38-gate`: PASS on Fedora
+- Stage 4 gate: PASS on Fedora
+
+
+## Phase 39 - Health State Model
+
+Status: IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
 
 ### Concepts Learned
 
-- Observability overhead must be measured at the producer boundary that can affect the data plane, not inferred from Grafana or backend latency.
-- Wall-clock producer cost and process CPU cost answer different questions; both are measured with monotonic/process CPU clocks.
-- The disabled path is a useful reference baseline, but absolute budgets are more stable than ratios when the baseline loop costs only a few nanoseconds per event.
-- A missing collector must fail fast: events are dropped immediately with zero queued telemetry memory.
-- A stalled collector must create `EAGAIN`/would-block pressure, fill only the configured bounded queue, then drop newest events instead of blocking.
-- Queue occupancy is the primary application-controlled memory bound; RSS is also sampled as a coarse process-level guardrail because allocator/page behavior can add overhead beyond payload bytes.
-- Performance thresholds are intentionally generous failure budgets (microseconds/event), not machine-specific benchmark records.
-- Stage 4 is not closed until the real Phase 37 cross-signal query test, complete regressions, sanitizers, and Phase 38 budgets all pass together on Fedora.
+- Self-healing must begin with an explicit state model rather than scattered booleans such as `is_down` or ad-hoc counters.
+- A single backend failure is weak evidence. `SUSPECT` provides hysteresis so transient failures do not immediately eject a backend.
+- `UNHEALTHY` and `RECOVERING` are intentionally non-eligible states: cooldown plus multiple recovery successes prevents rapid traffic flapping.
+- Recovery is asymmetric with failure: a backend can become suspicious quickly, but it must demonstrate sustained health before being trusted again.
+- Time is injected as monotonic nanoseconds. The state machine never sleeps and rejects time moving backward, making transitions deterministic and testable.
+- Health classification is separated from probing and traffic-routing policy. Later phases consume this model instead of embedding probe/network logic inside it.
 
 ### Implementation
 
-- `src/telemetry_overhead_lab.c`: measures producer wall time, process CPU time, current RSS, queue occupancy, drops, `EAGAIN`, connect failures, and post-producer drain state for disabled and telemetry-enabled modes.
-- `tests/integration/test_telemetry_overhead.py`: proves disabled measurement, missing-collector fast failure, healthy draining delivery, and stalled-collector bounded drop behavior.
-- `scripts/phase38_telemetry_benchmark.py`: takes repeated samples and reports medians for disabled, missing, draining, and stalled scenarios with explicit budgets.
-- `Makefile`: adds `test-telemetry-overhead`, `benchmark-telemetry-overhead`, `sanitize-telemetry-overhead`, and the Stage 4-closing `phase38-gate`.
-- Phase 38 tests are included in `make test` and sanitizer coverage so bounded telemetry behavior remains a regression contract.
+- `include/backend_health.h`: state/config/runtime contract for `UNKNOWN`, `HEALTHY`, `SUSPECT`, `UNHEALTHY`, and `RECOVERING`.
+- `src/backend_health.c`: threshold, cooldown, recovery-hysteresis, monotonic-time validation, counters, transition tracking, and eligibility semantics.
+- `tests/unit/test_backend_health.c`: deterministic state-transition, cooldown, hysteresis, invalid-config, and monotonic-time tests.
+- `src/health_state_lab.c`: simulated transient-failure and trip/recovery scenarios without wall-clock sleeps.
+- `tests/integration/test_health_state_lab.py`: validates CLI behavior and complete transition sequences.
+- `Makefile`: adds build/test/sanitizer/Phase 39 gate targets and integrates the model into project-wide regressions.
 
-### Measured Assistant Baseline
+### Phase Boundary
 
-A five-sample assistant-environment run produced approximately:
-
-- disabled median wall: 3 ns/event;
-- missing collector median wall: 19 ns/event;
-- missing collector median CPU: 19 ns/event;
-- draining collector median wall/CPU: 478 ns/event;
-- stalled collector median wall/CPU: about 109 ns/event;
-- stalled peak queue: 65,268 bytes under a 65,536-byte cap;
-- minimum stalled drops: 49,935 of 50,000 generated events;
-- maximum observed RSS delta: about 1.69 MiB.
-
-These values are reference evidence only. Fedora is authoritative; the actual gate budgets are deliberately much wider.
+Phase 39 models health only. It does not perform active probes, remove backends from the existing selector, schedule probe timers, or implement automatic restart/remediation. Those are later Stage 5 responsibilities.
 
 ### Quality Gate
 
-- strict C11 `telemetry_overhead_lab` build: PASS in assistant validation
-- Python syntax checks: PASS in assistant validation
-- disabled baseline measurement: PASS in assistant validation
-- missing collector drops immediately with zero queue growth: PASS in assistant validation
-- healthy draining collector delivers all targeted events: PASS in assistant validation
-- stalled collector triggers would-block and bounded drops: PASS in assistant validation
-- 64 KiB queue cap respected under stall: PASS in assistant validation
-- wall/CPU measurements emitted: PASS in assistant validation
-- RSS guardrail emitted and below budget: PASS in assistant validation
-- five-sample benchmark budgets: PASS in assistant validation
-- ASan/UBSan Phase 38 integration tests: PASS in assistant validation
-- real Phase 37 Grafana/Loki/Prometheus/Tempo validation: PENDING LOCAL FEDORA RUN
-- complete `make test`: PENDING LOCAL FEDORA RUN
-- complete `make sanitize`: PENDING LOCAL FEDORA RUN
-- `make phase38-gate`: PENDING LOCAL FEDORA RUN
-
-### Required Final Markers
-
-```text
-Phase 38 gate passed: telemetry latency/CPU/memory budgets, bounded slow/dead collector behavior, real cross-signal observability, regressions, and sanitizers completed.
-Stage 4 gate passed: nonblocking IPC, correlation, structured logs, OpenTelemetry logs/metrics/traces, Grafana, and measured failure-isolated observability completed.
-```
+- strict C11 build: PENDING LOCAL FEDORA RUN
+- state transition unit tests: PENDING LOCAL FEDORA RUN
+- transient-failure hysteresis: PENDING LOCAL FEDORA RUN
+- failure threshold trip: PENDING LOCAL FEDORA RUN
+- cooldown enforcement: PENDING LOCAL FEDORA RUN
+- multi-success recovery hysteresis: PENDING LOCAL FEDORA RUN
+- monotonic-time rejection: PENDING LOCAL FEDORA RUN
+- integration state-sequence lab: PENDING LOCAL FEDORA RUN
+- ASan/UBSan: PENDING LOCAL FEDORA RUN
+- complete project `make test`: PENDING LOCAL FEDORA RUN
+- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
+- `make phase39-gate`: PENDING LOCAL FEDORA RUN
 
 ### Next Phase
 
-Phase 39 — Health State Model: begin Stage 5 by defining explicit backend/service health states and transitions that self-healing decisions can safely consume.
+Phase 40 - Active health probing: schedule bounded nonblocking probes and feed probe results into the Phase 39 health state machine.
