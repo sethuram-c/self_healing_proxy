@@ -835,3 +835,23 @@ make phase39-gate
 ```
 
 Phase boundary: Phase 39 does **not** add active probes, mutate the existing round-robin selector, or automatically eject backends from the production proxy. It establishes the state semantics first. Phase 40 will add active health probing on top of this model.
+
+
+## Phase 40 - Active Health Probing
+
+Phase 40 turns the Phase 39 health state model into a live evidence pipeline using bounded, nonblocking TCP connect probes. The probe module is deliberately separate from the existing backend selector: it observes reachability and updates `backend_health_t`, but it does not yet change production routing.
+
+Linux nonblocking connect semantics are central to this phase: `connect()` may return `EINPROGRESS`; readiness for writing means the attempt has completed, not necessarily succeeded, so the probe reads `SO_ERROR` to distinguish success from refusal or another socket error. Every in-flight probe also has an explicit monotonic deadline.
+
+Useful commands:
+
+```bash
+make test-active-health-probe
+make sanitize-active-health-probe
+./build/active_health_probe_lab --help
+make phase40-gate
+```
+
+A healthy local backend can be tested by pointing the lab at any listening TCP port. A closed loopback port should produce `REFUSED` and repeated failures should drive the Phase 39 model into `UNHEALTHY`. If the backend starts listening after cooldown, successful probes move the state through `RECOVERING` and back to `HEALTHY`.
+
+Phase boundary: this is TCP reachability evidence only. HTTP semantic probes, routing ejection, passive request-path evidence, automated restart/remediation, and backoff/jitter policies remain later Stage 5 work.

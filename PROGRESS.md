@@ -2003,7 +2003,7 @@ Status: COMPLETE
 
 ## Phase 39 - Health State Model
 
-Status: IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -2029,19 +2029,63 @@ Phase 39 models health only. It does not perform active probes, remove backends 
 
 ### Quality Gate
 
-- strict C11 build: PENDING LOCAL FEDORA RUN
-- state transition unit tests: PENDING LOCAL FEDORA RUN
-- transient-failure hysteresis: PENDING LOCAL FEDORA RUN
-- failure threshold trip: PENDING LOCAL FEDORA RUN
-- cooldown enforcement: PENDING LOCAL FEDORA RUN
-- multi-success recovery hysteresis: PENDING LOCAL FEDORA RUN
-- monotonic-time rejection: PENDING LOCAL FEDORA RUN
-- integration state-sequence lab: PENDING LOCAL FEDORA RUN
-- ASan/UBSan: PENDING LOCAL FEDORA RUN
-- complete project `make test`: PENDING LOCAL FEDORA RUN
-- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
-- `make phase39-gate`: PENDING LOCAL FEDORA RUN
+- strict C11 build: PASS on Fedora
+- state transition unit tests: PASS on Fedora
+- transient-failure hysteresis: PASS on Fedora
+- failure threshold trip: PASS on Fedora
+- cooldown enforcement: PASS on Fedora
+- multi-success recovery hysteresis: PASS on Fedora
+- monotonic-time rejection: PASS on Fedora
+- integration state-sequence lab: PASS on Fedora
+- ASan/UBSan: PASS on Fedora
+- complete project `make test`: PASS inside Phase 39 gate
+- complete project `make sanitize`: PASS inside Phase 39 gate
+- `make phase39-gate`: PASS on Fedora
 
 ### Next Phase
 
 Phase 40 - Active health probing: schedule bounded nonblocking probes and feed probe results into the Phase 39 health state machine.
+
+
+## Phase 40 - Active Health Probing
+
+Status: IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+
+### Concepts Learned
+
+- Active health checks are evidence producers; they do not own routing policy. Probe outcomes feed the Phase 39 state model.
+- TCP health probes must never use a blocking `connect()`. The probe socket is nonblocking, `EINPROGRESS` means "pending", and completion is verified with writability plus `SO_ERROR`.
+- Every probe has its own monotonic deadline. A backend that never completes a handshake becomes a bounded `TIMEOUT`, not an indefinitely stuck control-plane operation.
+- Probe scheduling is monotonic and interval-based. A completed result must be consumed before the next probe starts, preventing overlapping probes for one backend in this phase.
+- Connection refusal, timeout, and other socket errors are distinct probe outcomes, but all failures feed the same health evidence API.
+- Recovery remains asymmetric: after failures trip `UNHEALTHY`, cooldown must move the backend into `RECOVERING`, and multiple successful probes are required before `HEALTHY`.
+
+### Implementation
+
+- `include/health_probe.h`: active-probe state, configuration, result taxonomy, counters, scheduling, and result-consumption API.
+- `src/health_probe.c`: IPv4 nonblocking TCP connect, `EINPROGRESS`, zero-time `poll()`, `SO_ERROR` completion, explicit deadlines, error classification, and cleanup.
+- `src/active_health_probe_lab.c`: monotonic scheduler that feeds completed probe results into `backend_health_t`.
+- `tests/unit/test_health_probe.c`: configuration, due scheduling, result consumption, deterministic deadline timeout, and result-name tests.
+- `tests/integration/test_active_health_probe.py`: real loopback healthy/refused/recovery scenarios using a disposable TCP accept server.
+- `Makefile`: Phase 40 build/test/sanitizer/gate targets plus project regression integration.
+
+### Phase Boundary
+
+Phase 40 observes backend reachability and updates health state only. It does not yet modify the production round-robin selector, eject backends from live traffic, perform HTTP application-level health requests, restart processes, or execute remediation actions.
+
+### Quality Gate
+
+- strict C11 health-probe build: PENDING LOCAL FEDORA RUN
+- active-probe unit tests: PENDING LOCAL FEDORA RUN
+- healthy loopback probe success: PENDING LOCAL FEDORA RUN
+- refused-port classification: PENDING LOCAL FEDORA RUN
+- deterministic timeout/deadline behavior: PENDING LOCAL FEDORA RUN
+- UNHEALTHY -> RECOVERING -> HEALTHY probe recovery: PENDING LOCAL FEDORA RUN
+- ASan/UBSan: PENDING LOCAL FEDORA RUN
+- complete project `make test`: PENDING LOCAL FEDORA RUN
+- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
+- `make phase40-gate`: PENDING LOCAL FEDORA RUN
+
+### Next Phase
+
+Phase 41 - Passive health evidence: combine real request-path failures/successes with active-probe evidence without double-counting or destabilizing routing.

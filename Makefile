@@ -39,6 +39,10 @@ HEALTH_STATE_LAB := build/health_state_lab
 BACKEND_HEALTH_TEST := build/test_backend_health
 SANITIZED_HEALTH_STATE_LAB := build/health_state_lab-sanitized
 SANITIZED_BACKEND_HEALTH_TEST := build/test_backend_health-sanitized
+ACTIVE_HEALTH_PROBE_LAB := build/active_health_probe_lab
+HEALTH_PROBE_TEST := build/test_health_probe
+SANITIZED_ACTIVE_HEALTH_PROBE_LAB := build/active_health_probe_lab-sanitized
+SANITIZED_HEALTH_PROBE_TEST := build/test_health_probe-sanitized
 SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
@@ -124,6 +128,10 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	health-state-lab \
 	sanitize-backend-health \
 	phase39-gate \
+	test-active-health-probe \
+	active-health-probe-lab \
+	sanitize-active-health-probe \
+	phase40-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -196,6 +204,21 @@ $(HEALTH_STATE_LAB): src/health_state_lab.c src/backend_health.c include/backend
 		src/health_state_lab.c \
 		src/backend_health.c \
 		-o $(HEALTH_STATE_LAB)
+
+$(HEALTH_PROBE_TEST): tests/unit/test_health_probe.c src/health_probe.c include/health_probe.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		tests/unit/test_health_probe.c \
+		src/health_probe.c \
+		-o $(HEALTH_PROBE_TEST)
+
+$(ACTIVE_HEALTH_PROBE_LAB): src/active_health_probe_lab.c src/health_probe.c src/backend_health.c include/health_probe.h include/backend_health.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		src/active_health_probe_lab.c \
+		src/health_probe.c \
+		src/backend_health.c \
+		-o $(ACTIVE_HEALTH_PROBE_LAB)
 
 $(UDS_SERVER): src/uds_server.c src/uds.c include/uds.h
 	mkdir -p build
@@ -489,7 +512,8 @@ test-unit: \
 	$(TELEMETRY_CHANNEL_TEST) \
 	$(TRACE_CONTEXT_TEST) \
 	$(JSON_LOG_TEST) \
-	$(BACKEND_HEALTH_TEST)
+	$(BACKEND_HEALTH_TEST) \
+	$(HEALTH_PROBE_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -510,6 +534,7 @@ test-unit: \
 	./$(TRACE_CONTEXT_TEST)
 	./$(JSON_LOG_TEST)
 	./$(BACKEND_HEALTH_TEST)
+	./$(HEALTH_PROBE_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
@@ -521,7 +546,8 @@ test-integration: \
 	$(JSON_LOG_LAB) \
 	$(TRACE_SPAN_LAB) \
 	$(TELEMETRY_OVERHEAD_LAB) \
-	$(HEALTH_STATE_LAB)
+	$(HEALTH_STATE_LAB) \
+	$(ACTIVE_HEALTH_PROBE_LAB)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -550,6 +576,7 @@ test-integration: \
 	python3 tests/integration/test_grafana_lgtm.py
 	python3 tests/integration/test_telemetry_overhead.py
 	python3 tests/integration/test_health_state_lab.py
+	python3 tests/integration/test_active_health_probe.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -1072,3 +1099,28 @@ phase39-gate: $(BACKEND_HEALTH_TEST) $(HEALTH_STATE_LAB)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 39 gate passed: explicit backend health states, hysteretic failure/recovery transitions, deterministic timing, regressions, and sanitizers completed."
+
+
+active-health-probe-lab: $(ACTIVE_HEALTH_PROBE_LAB)
+	./$(ACTIVE_HEALTH_PROBE_LAB) --help
+
+test-active-health-probe: $(HEALTH_PROBE_TEST) $(ACTIVE_HEALTH_PROBE_LAB)
+	./$(HEALTH_PROBE_TEST)
+	python3 tests/integration/test_active_health_probe.py
+
+sanitize-active-health-probe:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude tests/unit/test_health_probe.c src/health_probe.c -o $(SANITIZED_HEALTH_PROBE_TEST)
+	./$(SANITIZED_HEALTH_PROBE_TEST)
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		src/active_health_probe_lab.c src/health_probe.c src/backend_health.c \
+		-o $(SANITIZED_ACTIVE_HEALTH_PROBE_LAB)
+	ACTIVE_HEALTH_PROBE_LAB_BIN=$(SANITIZED_ACTIVE_HEALTH_PROBE_LAB) python3 tests/integration/test_active_health_probe.py
+
+phase40-gate: $(HEALTH_PROBE_TEST) $(ACTIVE_HEALTH_PROBE_LAB)
+	./$(HEALTH_PROBE_TEST)
+	python3 tests/integration/test_active_health_probe.py
+	$(MAKE) sanitize-active-health-probe
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 40 gate passed: nonblocking active TCP probes, bounded deadlines, health-state evidence integration, recovery, regressions, and sanitizers completed."
