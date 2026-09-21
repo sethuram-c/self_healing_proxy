@@ -855,3 +855,34 @@ make phase40-gate
 A healthy local backend can be tested by pointing the lab at any listening TCP port. A closed loopback port should produce `REFUSED` and repeated failures should drive the Phase 39 model into `UNHEALTHY`. If the backend starts listening after cooldown, successful probes move the state through `RECOVERING` and back to `HEALTHY`.
 
 Phase boundary: this is TCP reachability evidence only. HTTP semantic probes, routing ejection, passive request-path evidence, automated restart/remediation, and backoff/jitter policies remain later Stage 5 work.
+
+## Phase 41 - Passive health evidence
+
+Phase 41 adds a single request-path evidence policy on top of the Phase 39 health state machine. The passive layer does not own health states and does not make routing decisions. Its job is to classify one finalized backend attempt as positive, negative, or neutral evidence, then feed only positive/negative evidence into `backend_health_t`.
+
+The transport-health policy is intentionally conservative:
+
+- a completed upstream response is SUCCESS evidence, regardless of HTTP status code;
+- upstream connect refused/timeout/error, upstream response timeout, and reset-before-response are FAILURE evidence;
+- client disconnects, rejected client requests, local overload, local I/O errors, and application HTTP status are NEUTRAL.
+
+This prevents client-caused or proxy-local failures from poisoning a backend's health score. It also avoids treating an HTTP 500 as proof that the TCP backend is unhealthy; application-level status policy is a separate concern and can be added explicitly later.
+
+Each `passive_health_attempt_t` may be finalized exactly once. A second health report for the same backend attempt is rejected with `EALREADY`, protecting retry/error branches from double-counting the same failure.
+
+Useful commands:
+
+```bash
+make test-passive-health
+./build/passive_health_lab --scenario mixed
+./build/passive_health_lab --scenario neutral
+./build/passive_health_lab --scenario trip-recover
+make sanitize-passive-health
+make phase41-gate
+```
+
+The Phase 41 quality marker is:
+
+```text
+Phase 41 gate passed: request-path passive health classification, single-count attempt evidence, client/local neutrality, hysteretic recovery, regressions, and sanitizers completed.
+```

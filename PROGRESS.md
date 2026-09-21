@@ -1666,8 +1666,8 @@ events in subsequent phases.
 - healthy collector zero-drop framed delivery: PASS in assistant validation
 - ASan/UBSan unit + integration run: PASS in assistant validation
 - `git diff --check`: PASS in assistant validation
-- complete project `make test`: PENDING LOCAL FEDORA RUN
-- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
+- complete project `make test`: PASS ON FEDORA
+- complete project `make sanitize`: PASS ON FEDORA
 - `make phase31-gate`: PENDING LOCAL FEDORA RUN
 
 ### Next Phase
@@ -1714,8 +1714,8 @@ Phase 32 establishes correlation identity and propagation only. It does not yet 
 - unique attempt span IDs: PASS in assistant validation
 - Phase 30 framed telemetry propagation: PASS in assistant validation
 - ASan/UBSan unit + integration run: PASS in assistant validation
-- complete project `make test`: PENDING LOCAL FEDORA RUN
-- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
+- complete project `make test`: PASS ON FEDORA
+- complete project `make sanitize`: PASS ON FEDORA
 - `make phase32-gate`: PENDING LOCAL FEDORA RUN
 
 ### Next Phase
@@ -1775,8 +1775,8 @@ Phase 33 defines and validates the structured event representation. It does not 
 - remote trace preservation: PASS in assistant validation
 - oversized-field no-partial-frame behavior: PASS in assistant validation
 - ASan/UBSan unit + integration run: PASS in assistant validation
-- complete project `make test`: PENDING LOCAL FEDORA RUN
-- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
+- complete project `make test`: PASS ON FEDORA
+- complete project `make sanitize`: PASS ON FEDORA
 - `make phase33-gate`: PENDING LOCAL FEDORA RUN
 
 ### Next Phase
@@ -1974,8 +1974,8 @@ Phase 37 proves that the three native observability signals are queryable and co
 - real Prometheus query through Grafana: PASS on Fedora
 - real Loki query through Grafana: PASS on Fedora
 - real Tempo query through Grafana: PASS on Fedora
-- complete project `make test`: PENDING LOCAL FEDORA RUN
-- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
+- complete project `make test`: PASS ON FEDORA
+- complete project `make sanitize`: PASS ON FEDORA
 - `make phase37-gate`: PASS as part of Stage 4 closure on Fedora
 
 ### Next Phase
@@ -2049,7 +2049,7 @@ Phase 40 - Active health probing: schedule bounded nonblocking probes and feed p
 
 ## Phase 40 - Active Health Probing
 
-Status: IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+Status: COMPLETE
 
 ### Concepts Learned
 
@@ -2075,17 +2075,48 @@ Phase 40 observes backend reachability and updates health state only. It does no
 
 ### Quality Gate
 
-- strict C11 health-probe build: PENDING LOCAL FEDORA RUN
-- active-probe unit tests: PENDING LOCAL FEDORA RUN
-- healthy loopback probe success: PENDING LOCAL FEDORA RUN
-- refused-port classification: PENDING LOCAL FEDORA RUN
-- deterministic timeout/deadline behavior: PENDING LOCAL FEDORA RUN
-- UNHEALTHY -> RECOVERING -> HEALTHY probe recovery: PENDING LOCAL FEDORA RUN
-- ASan/UBSan: PENDING LOCAL FEDORA RUN
-- complete project `make test`: PENDING LOCAL FEDORA RUN
-- complete project `make sanitize`: PENDING LOCAL FEDORA RUN
-- `make phase40-gate`: PENDING LOCAL FEDORA RUN
+- strict C11 health-probe build: PASS ON FEDORA
+- active-probe unit tests: PASS ON FEDORA
+- healthy loopback probe success: PASS ON FEDORA
+- refused-port classification: PASS ON FEDORA
+- deterministic timeout/deadline behavior: PASS ON FEDORA
+- UNHEALTHY -> RECOVERING -> HEALTHY probe recovery: PASS ON FEDORA
+- ASan/UBSan: PASS ON FEDORA
+- complete project `make test`: PASS ON FEDORA
+- complete project `make sanitize`: PASS ON FEDORA
+- `make phase40-gate`: PASS ON FEDORA
 
 ### Next Phase
 
 Phase 41 - Passive health evidence: combine real request-path failures/successes with active-probe evidence without double-counting or destabilizing routing.
+
+## Phase 41 - Passive Health Evidence
+
+**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+
+### Goal
+Translate request-path backend outcomes into carefully classified health evidence without allowing client-caused or proxy-local failures to poison backend state.
+
+### Implemented
+- `include/passive_health.h`
+- `src/passive_health.c`
+- `src/passive_health_lab.c`
+- `tests/unit/test_passive_health.c`
+- `tests/integration/test_passive_health_lab.py`
+- strict SUCCESS / FAILURE / NEUTRAL evidence policy
+- completed upstream response -> SUCCESS
+- backend transport/connect/response failures -> FAILURE
+- client disconnect / invalid request / local overload / local I/O -> NEUTRAL
+- raw HTTP status -> NEUTRAL at transport-health layer
+- per-attempt single-finalization guard (`EALREADY` on duplicate evidence)
+- integration with the Phase 39 `backend_health_t` state machine
+- deterministic trip/cooldown/recovery scenarios
+- targeted ASan/UBSan coverage
+
+### Phase boundary
+Phase 41 classifies and applies passive evidence only. It does not yet modify production backend selection, merge active/passive confidence policy, eject backends from routing, or perform remediation.
+
+### Local quality gate pending
+Run `make phase41-gate` on Fedora. Phase completion requires the exact marker:
+
+`Phase 41 gate passed: request-path passive health classification, single-count attempt evidence, client/local neutrality, hysteretic recovery, regressions, and sanitizers completed.`
