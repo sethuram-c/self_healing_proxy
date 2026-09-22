@@ -886,3 +886,22 @@ The Phase 41 quality marker is:
 ```text
 Phase 41 gate passed: request-path passive health classification, single-count attempt evidence, client/local neutrality, hysteretic recovery, regressions, and sanitizers completed.
 ```
+
+## Phase 42 - Health-Aware Backend Selection
+
+Phase 42 connects the Phase 39 health state model to backend selection without yet adding remediation. A small selector wrapper combines the existing round-robin/capacity logic with `backend_health_is_eligible()`. `UNKNOWN`, `HEALTHY`, and `SUSPECT` remain selectable; `UNHEALTHY` and `RECOVERING` are skipped.
+
+Selection remains round-robin among eligible backends. Capacity limits still apply, retry exclusion still applies, and if every backend is non-eligible the selector returns no backend without mutating the cursor or connection counters. A backend that completes cooldown and recovery hysteresis rejoins the normal rotation automatically.
+
+Useful commands:
+
+```bash
+make test-health-aware-selection
+./build/health_aware_selection_lab --scenario skip
+./build/health_aware_selection_lab --scenario all-unavailable
+./build/health_aware_selection_lab --scenario rejoin
+make sanitize-health-aware-selection
+make phase42-gate
+```
+
+Phase boundary: Phase 42 establishes routing policy over health state. It does not restart backends, launch replacements, change health thresholds dynamically, or implement circuit-breaker backoff/remediation. Those are later Stage 5 responsibilities.

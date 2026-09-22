@@ -47,6 +47,10 @@ PASSIVE_HEALTH_LAB := build/passive_health_lab
 PASSIVE_HEALTH_TEST := build/test_passive_health
 SANITIZED_PASSIVE_HEALTH_LAB := build/passive_health_lab-sanitized
 SANITIZED_PASSIVE_HEALTH_TEST := build/test_passive_health-sanitized
+HEALTH_AWARE_SELECTION_LAB := build/health_aware_selection_lab
+HEALTH_AWARE_POOL_TEST := build/test_health_aware_pool
+SANITIZED_HEALTH_AWARE_SELECTION_LAB := build/health_aware_selection_lab-sanitized
+SANITIZED_HEALTH_AWARE_POOL_TEST := build/test_health_aware_pool-sanitized
 SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
@@ -139,6 +143,10 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	test-passive-health \
 	sanitize-passive-health \
 	phase41-gate \
+	health-aware-selection-lab \
+	test-health-aware-selection \
+	sanitize-health-aware-selection \
+	phase42-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -163,6 +171,7 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	sanitize-json-logs \
 	sanitize-telemetry-overhead \
 	sanitize-backend-health \
+	sanitize-health-aware-selection \
 	sanitize-tcp \
 	sanitize-epoll \
 	benchmark \
@@ -340,6 +349,24 @@ $(TELEMETRY_OVERHEAD_LAB): src/telemetry_overhead_lab.c src/telemetry_channel.c 
 		src/telemetry_channel.c \
 		src/ipc_frame.c \
 		-o $(TELEMETRY_OVERHEAD_LAB)
+
+$(HEALTH_AWARE_POOL_TEST): tests/unit/test_health_aware_pool.c src/health_aware_pool.c src/backend_pool.c src/backend_health.c include/health_aware_pool.h include/backend_pool.h include/backend_health.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		tests/unit/test_health_aware_pool.c \
+		src/health_aware_pool.c \
+		src/backend_pool.c \
+		src/backend_health.c \
+		-o $(HEALTH_AWARE_POOL_TEST)
+
+$(HEALTH_AWARE_SELECTION_LAB): src/health_aware_selection_lab.c src/health_aware_pool.c src/backend_pool.c src/backend_health.c include/health_aware_pool.h include/backend_pool.h include/backend_health.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		src/health_aware_selection_lab.c \
+		src/health_aware_pool.c \
+		src/backend_pool.c \
+		src/backend_health.c \
+		-o $(HEALTH_AWARE_SELECTION_LAB)
 
 $(TCP_LISTENER): \
 	src/tcp_listener.c \
@@ -537,7 +564,8 @@ test-unit: \
 	$(JSON_LOG_TEST) \
 	$(BACKEND_HEALTH_TEST) \
 	$(HEALTH_PROBE_TEST) \
-	$(PASSIVE_HEALTH_TEST)
+	$(PASSIVE_HEALTH_TEST) \
+	$(HEALTH_AWARE_POOL_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -560,6 +588,7 @@ test-unit: \
 	./$(BACKEND_HEALTH_TEST)
 	./$(HEALTH_PROBE_TEST)
 	./$(PASSIVE_HEALTH_TEST)
+	./$(HEALTH_AWARE_POOL_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
@@ -573,7 +602,8 @@ test-integration: \
 	$(TELEMETRY_OVERHEAD_LAB) \
 	$(HEALTH_STATE_LAB) \
 	$(ACTIVE_HEALTH_PROBE_LAB) \
-	$(PASSIVE_HEALTH_LAB)
+	$(PASSIVE_HEALTH_LAB) \
+	$(HEALTH_AWARE_SELECTION_LAB)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -604,6 +634,7 @@ test-integration: \
 	python3 tests/integration/test_health_state_lab.py
 	python3 tests/integration/test_active_health_probe.py
 	python3 tests/integration/test_passive_health_lab.py
+	python3 tests/integration/test_health_aware_selection.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -1178,3 +1209,30 @@ phase41-gate: $(PASSIVE_HEALTH_TEST) $(PASSIVE_HEALTH_LAB)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 41 gate passed: request-path passive health classification, single-count attempt evidence, client/local neutrality, hysteretic recovery, regressions, and sanitizers completed."
+
+health-aware-selection-lab: $(HEALTH_AWARE_SELECTION_LAB)
+	./$(HEALTH_AWARE_SELECTION_LAB) --scenario skip
+
+test-health-aware-selection: $(HEALTH_AWARE_POOL_TEST) $(HEALTH_AWARE_SELECTION_LAB)
+	./$(HEALTH_AWARE_POOL_TEST)
+	python3 tests/integration/test_health_aware_selection.py
+
+sanitize-health-aware-selection:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		tests/unit/test_health_aware_pool.c src/health_aware_pool.c src/backend_pool.c src/backend_health.c \
+		-o $(SANITIZED_HEALTH_AWARE_POOL_TEST)
+	./$(SANITIZED_HEALTH_AWARE_POOL_TEST)
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		src/health_aware_selection_lab.c src/health_aware_pool.c src/backend_pool.c src/backend_health.c \
+		-o $(SANITIZED_HEALTH_AWARE_SELECTION_LAB)
+	HEALTH_AWARE_SELECTION_LAB_BIN=$(SANITIZED_HEALTH_AWARE_SELECTION_LAB) python3 tests/integration/test_health_aware_selection.py
+
+phase42-gate: $(HEALTH_AWARE_POOL_TEST) $(HEALTH_AWARE_SELECTION_LAB)
+	./$(HEALTH_AWARE_POOL_TEST)
+	python3 tests/integration/test_health_aware_selection.py
+	$(MAKE) sanitize-health-aware-selection
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 42 gate passed: health-aware round robin skips non-eligible backends, preserves capacity/fairness, fails closed when none are eligible, reintegrates recovered backends, regressions, and sanitizers completed."
+

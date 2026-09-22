@@ -2120,3 +2120,37 @@ Phase 41 classifies and applies passive evidence only. It does not yet modify pr
 Run `make phase41-gate` on Fedora. Phase completion requires the exact marker:
 
 `Phase 41 gate passed: request-path passive health classification, single-count attempt evidence, client/local neutrality, hysteretic recovery, regressions, and sanitizers completed.`
+
+## Phase 42 - Health-Aware Backend Selection
+
+**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+
+### Goal
+Make backend selection consume the Phase 39 health eligibility contract while preserving the existing round-robin, admission-control, and retry-exclusion semantics.
+
+### Implemented
+- `include/health_aware_pool.h`: selector wrapper contract binding one `backend_health_t` to each existing backend target.
+- `src/health_aware_pool.c`: round-robin scan that skips non-eligible health states and saturated targets, preserves the existing cursor semantics, and supports retry exclusion.
+- `src/health_aware_selection_lab.c`: deterministic skip/all-unavailable/rejoin scenarios.
+- `tests/unit/test_health_aware_pool.c`: eligibility, fairness, capacity, exclusion, no-backend, and recovered-rejoin tests.
+- `tests/integration/test_health_aware_selection.py`: validates complete selection sequences and fail-closed behavior.
+- `Makefile`: Phase 42 build/test/sanitizer/gate targets and project-wide regression integration.
+
+### Routing policy
+- `UNKNOWN`: selectable
+- `HEALTHY`: selectable
+- `SUSPECT`: selectable
+- `UNHEALTHY`: skipped
+- `RECOVERING`: skipped
+- all backends skipped/saturated/excluded: return no target; do not silently route to an unhealthy backend
+
+### Phase boundary
+Phase 42 changes health-aware selection policy only. It does not restart processes, create replacement backends, add exponential backoff, or execute remediation.
+
+### Local quality gate pending
+Run `make phase42-gate` on Fedora. Completion requires the exact marker:
+
+`Phase 42 gate passed: health-aware round robin skips non-eligible backends, preserves capacity/fairness, fails closed when none are eligible, reintegrates recovered backends, regressions, and sanitizers completed.`
+
+### Next Phase
+Phase 43 - Failure-window and circuit-breaker policy: turn repeated backend failures into bounded temporary isolation with explicit reopen behavior.
