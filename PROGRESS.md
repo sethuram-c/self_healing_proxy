@@ -2154,3 +2154,23 @@ Run `make phase42-gate` on Fedora. Completion requires the exact marker:
 
 ### Next Phase
 Phase 43 - Failure-window and circuit-breaker policy: turn repeated backend failures into bounded temporary isolation with explicit reopen behavior.
+
+## Phase 43 - Circuit Breaker / Failure Window
+
+Status: IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+
+Implemented:
+- fixed-memory rolling failure window per backend
+- CLOSED / OPEN / HALF_OPEN circuit states
+- monotonic open-duration timing
+- immediate rejection while OPEN
+- exactly one in-flight HALF_OPEN trial
+- successful trial closes and clears stale failure evidence
+- failed HALF_OPEN trial reopens immediately
+- circuit-aware round robin that composes Phase 39 health, Stage 2 capacity, retry exclusion, and circuit permission
+- deterministic unit/integration tests with no sleeps
+- ASan/UBSan target and full phase gate
+
+Quality gate: PENDING local Fedora `make phase43-gate`.
+
+Next: Phase 44 - bounded remediation policy / restart decision model.

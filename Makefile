@@ -51,6 +51,10 @@ HEALTH_AWARE_SELECTION_LAB := build/health_aware_selection_lab
 HEALTH_AWARE_POOL_TEST := build/test_health_aware_pool
 SANITIZED_HEALTH_AWARE_SELECTION_LAB := build/health_aware_selection_lab-sanitized
 SANITIZED_HEALTH_AWARE_POOL_TEST := build/test_health_aware_pool-sanitized
+CIRCUIT_BREAKER_LAB := build/circuit_breaker_lab
+CIRCUIT_BREAKER_TEST := build/test_circuit_breaker
+SANITIZED_CIRCUIT_BREAKER_LAB := build/circuit_breaker_lab-sanitized
+SANITIZED_CIRCUIT_BREAKER_TEST := build/test_circuit_breaker-sanitized
 SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
@@ -1236,3 +1240,38 @@ phase42-gate: $(HEALTH_AWARE_POOL_TEST) $(HEALTH_AWARE_SELECTION_LAB)
 	$(MAKE) sanitize
 	@echo "Phase 42 gate passed: health-aware round robin skips non-eligible backends, preserves capacity/fairness, fails closed when none are eligible, reintegrates recovered backends, regressions, and sanitizers completed."
 
+
+
+$(CIRCUIT_BREAKER_TEST): tests/unit/test_circuit_breaker.c src/circuit_breaker.c include/circuit_breaker.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude tests/unit/test_circuit_breaker.c src/circuit_breaker.c -o $(CIRCUIT_BREAKER_TEST)
+
+$(CIRCUIT_BREAKER_LAB): src/circuit_breaker_lab.c src/circuit_breaker.c src/circuit_aware_pool.c src/backend_pool.c src/backend_health.c include/circuit_breaker.h include/circuit_aware_pool.h include/backend_pool.h include/backend_health.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		src/circuit_breaker_lab.c src/circuit_breaker.c src/circuit_aware_pool.c src/backend_pool.c src/backend_health.c \
+		-o $(CIRCUIT_BREAKER_LAB)
+
+circuit-breaker-lab: $(CIRCUIT_BREAKER_LAB)
+	./$(CIRCUIT_BREAKER_LAB) --scenario open-skip
+
+test-circuit-breaker: $(CIRCUIT_BREAKER_TEST) $(CIRCUIT_BREAKER_LAB)
+	./$(CIRCUIT_BREAKER_TEST)
+	python3 tests/integration/test_circuit_breaker_lab.py
+
+sanitize-circuit-breaker:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude tests/unit/test_circuit_breaker.c src/circuit_breaker.c -o $(SANITIZED_CIRCUIT_BREAKER_TEST)
+	./$(SANITIZED_CIRCUIT_BREAKER_TEST)
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		src/circuit_breaker_lab.c src/circuit_breaker.c src/circuit_aware_pool.c src/backend_pool.c src/backend_health.c \
+		-o $(SANITIZED_CIRCUIT_BREAKER_LAB)
+	CIRCUIT_BREAKER_LAB_BIN=$(SANITIZED_CIRCUIT_BREAKER_LAB) python3 tests/integration/test_circuit_breaker_lab.py
+
+phase43-gate: $(CIRCUIT_BREAKER_TEST) $(CIRCUIT_BREAKER_LAB)
+	./$(CIRCUIT_BREAKER_TEST)
+	python3 tests/integration/test_circuit_breaker_lab.py
+	$(MAKE) sanitize-circuit-breaker
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 43 gate passed: bounded failure windows open circuits, open circuits reject new traffic, half-open permits one controlled trial, successful trials close safely, regressions, and sanitizers completed."

@@ -905,3 +905,18 @@ make phase42-gate
 ```
 
 Phase boundary: Phase 42 establishes routing policy over health state. It does not restart backends, launch replacements, change health thresholds dynamically, or implement circuit-breaker backoff/remediation. Those are later Stage 5 responsibilities.
+
+## Phase 43 - Circuit Breaker / Failure Window
+
+Phase 43 adds a bounded per-backend circuit breaker. Failures are retained only inside a monotonic rolling window; reaching the configured threshold opens the circuit. OPEN rejects new selections immediately. After a bounded open duration, HALF_OPEN permits exactly one trial request. A successful trial closes the circuit and clears the failure window; a failed trial immediately reopens it. The new `circuit_aware_pool` composes backend health, connection capacity, retry exclusion, round-robin fairness, and circuit permission without changing the older selector contracts.
+
+Useful commands:
+
+```bash
+make test-circuit-breaker
+./build/circuit_breaker_lab --scenario open-skip
+./build/circuit_breaker_lab --scenario window
+./build/circuit_breaker_lab --scenario half-open
+make sanitize-circuit-breaker
+make phase43-gate
+```
