@@ -55,6 +55,10 @@ CIRCUIT_BREAKER_LAB := build/circuit_breaker_lab
 CIRCUIT_BREAKER_TEST := build/test_circuit_breaker
 SANITIZED_CIRCUIT_BREAKER_LAB := build/circuit_breaker_lab-sanitized
 SANITIZED_CIRCUIT_BREAKER_TEST := build/test_circuit_breaker-sanitized
+REMEDIATION_POLICY_LAB := build/remediation_policy_lab
+REMEDIATION_POLICY_TEST := build/test_remediation_policy
+SANITIZED_REMEDIATION_POLICY_LAB := build/remediation_policy_lab-sanitized
+SANITIZED_REMEDIATION_POLICY_TEST := build/test_remediation_policy-sanitized
 SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
@@ -151,6 +155,13 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	test-health-aware-selection \
 	sanitize-health-aware-selection \
 	phase42-gate \
+	test-circuit-breaker \
+	sanitize-circuit-breaker \
+	phase43-gate \
+	remediation-policy-lab \
+	test-remediation-policy \
+	sanitize-remediation-policy \
+	phase44-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -1275,3 +1286,42 @@ phase43-gate: $(CIRCUIT_BREAKER_TEST) $(CIRCUIT_BREAKER_LAB)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 43 gate passed: bounded failure windows open circuits, open circuits reject new traffic, half-open permits one controlled trial, successful trials close safely, regressions, and sanitizers completed."
+
+
+$(REMEDIATION_POLICY_TEST): tests/unit/test_remediation_policy.c src/remediation_policy.c src/backend_health.c src/circuit_breaker.c include/remediation_policy.h include/backend_health.h include/circuit_breaker.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		tests/unit/test_remediation_policy.c src/remediation_policy.c src/backend_health.c src/circuit_breaker.c \
+		-o $(REMEDIATION_POLICY_TEST)
+
+$(REMEDIATION_POLICY_LAB): src/remediation_policy_lab.c src/remediation_policy.c src/backend_health.c src/circuit_breaker.c include/remediation_policy.h include/backend_health.h include/circuit_breaker.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		src/remediation_policy_lab.c src/remediation_policy.c src/backend_health.c src/circuit_breaker.c \
+		-o $(REMEDIATION_POLICY_LAB)
+
+remediation-policy-lab: $(REMEDIATION_POLICY_LAB)
+	./$(REMEDIATION_POLICY_LAB) --scenario backoff
+
+test-remediation-policy: $(REMEDIATION_POLICY_TEST) $(REMEDIATION_POLICY_LAB)
+	./$(REMEDIATION_POLICY_TEST)
+	python3 tests/integration/test_remediation_policy_lab.py
+
+sanitize-remediation-policy:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		tests/unit/test_remediation_policy.c src/remediation_policy.c src/backend_health.c src/circuit_breaker.c \
+		-o $(SANITIZED_REMEDIATION_POLICY_TEST)
+	./$(SANITIZED_REMEDIATION_POLICY_TEST)
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		src/remediation_policy_lab.c src/remediation_policy.c src/backend_health.c src/circuit_breaker.c \
+		-o $(SANITIZED_REMEDIATION_POLICY_LAB)
+	REMEDIATION_POLICY_LAB_BIN=$(SANITIZED_REMEDIATION_POLICY_LAB) python3 tests/integration/test_remediation_policy_lab.py
+
+phase44-gate: $(REMEDIATION_POLICY_TEST) $(REMEDIATION_POLICY_LAB)
+	./$(REMEDIATION_POLICY_TEST)
+	python3 tests/integration/test_remediation_policy_lab.py
+	$(MAKE) sanitize-remediation-policy
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 44 gate passed: remediation requires strong evidence, applies capped exponential backoff, enforces rolling attempt budgets, resets safely after recovery, regressions, and sanitizers completed."

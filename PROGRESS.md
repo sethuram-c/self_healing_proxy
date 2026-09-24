@@ -2092,7 +2092,7 @@ Phase 41 - Passive health evidence: combine real request-path failures/successes
 
 ## Phase 41 - Passive Health Evidence
 
-**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+**Status:** COMPLETE
 
 ### Goal
 Translate request-path backend outcomes into carefully classified health evidence without allowing client-caused or proxy-local failures to poison backend state.
@@ -2123,7 +2123,7 @@ Run `make phase41-gate` on Fedora. Phase completion requires the exact marker:
 
 ## Phase 42 - Health-Aware Backend Selection
 
-**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+**Status:** COMPLETE
 
 ### Goal
 Make backend selection consume the Phase 39 health eligibility contract while preserving the existing round-robin, admission-control, and retry-exclusion semantics.
@@ -2157,7 +2157,7 @@ Phase 43 - Failure-window and circuit-breaker policy: turn repeated backend fail
 
 ## Phase 43 - Circuit Breaker / Failure Window
 
-Status: IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+Status: COMPLETE
 
 Implemented:
 - fixed-memory rolling failure window per backend
@@ -2171,6 +2171,40 @@ Implemented:
 - deterministic unit/integration tests with no sleeps
 - ASan/UBSan target and full phase gate
 
-Quality gate: PENDING local Fedora `make phase43-gate`.
+Quality gate: PASS ON FEDORA (`make phase43-gate`).
 
 Next: Phase 44 - bounded remediation policy / restart decision model.
+
+
+## Phase 44 - Bounded Remediation Policy
+
+**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+
+### Goal
+Decide when a backend is eligible for remediation without executing destructive actions prematurely or repeatedly.
+
+### Implemented
+- `include/remediation_policy.h`: decision/action/reason taxonomy and fixed-memory attempt history.
+- `src/remediation_policy.c`: strong-evidence gate, capped exponential backoff, rolling attempt-window budget, recovery reset, backward-time rejection.
+- `src/remediation_policy_lab.c`: deterministic evidence/backoff/budget/recovery scenarios.
+- unit and integration coverage plus ASan/UBSan targets.
+
+### Default policy
+- require backend health `UNHEALTHY`
+- require circuit state `OPEN`
+- initial backoff: 10 simulated ns
+- maximum backoff: 40 simulated ns
+- attempt window: 100 simulated ns
+- maximum remediation attempts per window: 3
+- successful recovery resets the exponential backoff level but does not erase still-recent attempts from the rolling safety budget
+
+### Phase boundary
+Phase 44 returns a policy decision such as `RESTART_BACKEND`; it does not kill, signal, respawn, replace, or otherwise mutate a backend process.
+
+### Local quality gate pending
+Run `make phase44-gate` on Fedora. Completion requires the exact marker:
+
+`Phase 44 gate passed: remediation requires strong evidence, applies capped exponential backoff, enforces rolling attempt budgets, resets safely after recovery, regressions, and sanitizers completed.`
+
+### Next Phase
+Phase 45 - Remediation executor: safely turn an approved remediation decision into a supervised backend restart with identity checks and bounded lifecycle control.

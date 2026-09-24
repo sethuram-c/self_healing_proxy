@@ -920,3 +920,25 @@ make test-circuit-breaker
 make sanitize-circuit-breaker
 make phase43-gate
 ```
+
+## Phase 44 - Bounded Remediation Policy
+
+Phase 44 introduces a decision layer between failure containment and destructive healing actions. It does not restart anything yet. Instead, it answers whether a restart *would be allowed now*.
+
+Default policy in the lab requires both strong signals: backend health must be `UNHEALTHY` and the backend circuit must be `OPEN`. When that evidence is present, the policy still enforces two independent safety bounds: capped exponential backoff and a rolling maximum-attempt budget.
+
+The lab uses a deterministic policy of 10 ns initial backoff, 40 ns maximum backoff, a 100 ns attempt window, and at most three remediation attempts in that window. Tests inject monotonic timestamps; no sleeps are required.
+
+Useful commands:
+
+```bash
+make test-remediation-policy
+./build/remediation_policy_lab --scenario evidence
+./build/remediation_policy_lab --scenario backoff
+./build/remediation_policy_lab --scenario budget
+./build/remediation_policy_lab --scenario recovery
+make sanitize-remediation-policy
+make phase44-gate
+```
+
+The phase boundary is intentional: `RESTART_BACKEND` is a policy decision only. Phase 44 does not send signals, kill processes, spawn replacements, or mutate isolation state.
