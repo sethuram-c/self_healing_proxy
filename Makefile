@@ -59,6 +59,10 @@ REMEDIATION_POLICY_LAB := build/remediation_policy_lab
 REMEDIATION_POLICY_TEST := build/test_remediation_policy
 SANITIZED_REMEDIATION_POLICY_LAB := build/remediation_policy_lab-sanitized
 SANITIZED_REMEDIATION_POLICY_TEST := build/test_remediation_policy-sanitized
+REMEDIATION_EXECUTOR_LAB := build/remediation_executor_lab
+REMEDIATION_EXECUTOR_TEST := build/test_remediation_executor
+SANITIZED_REMEDIATION_EXECUTOR_LAB := build/remediation_executor_lab-sanitized
+SANITIZED_REMEDIATION_EXECUTOR_TEST := build/test_remediation_executor-sanitized
 SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
@@ -162,6 +166,10 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	test-remediation-policy \
 	sanitize-remediation-policy \
 	phase44-gate \
+	remediation-executor-lab \
+	test-remediation-executor \
+	sanitize-remediation-executor \
+	phase45-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -580,7 +588,8 @@ test-unit: \
 	$(BACKEND_HEALTH_TEST) \
 	$(HEALTH_PROBE_TEST) \
 	$(PASSIVE_HEALTH_TEST) \
-	$(HEALTH_AWARE_POOL_TEST)
+	$(HEALTH_AWARE_POOL_TEST) \
+	$(REMEDIATION_EXECUTOR_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -604,6 +613,7 @@ test-unit: \
 	./$(HEALTH_PROBE_TEST)
 	./$(PASSIVE_HEALTH_TEST)
 	./$(HEALTH_AWARE_POOL_TEST)
+	./$(REMEDIATION_EXECUTOR_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
@@ -618,7 +628,8 @@ test-integration: \
 	$(HEALTH_STATE_LAB) \
 	$(ACTIVE_HEALTH_PROBE_LAB) \
 	$(PASSIVE_HEALTH_LAB) \
-	$(HEALTH_AWARE_SELECTION_LAB)
+	$(HEALTH_AWARE_SELECTION_LAB) \
+	$(REMEDIATION_EXECUTOR_LAB)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -650,6 +661,7 @@ test-integration: \
 	python3 tests/integration/test_active_health_probe.py
 	python3 tests/integration/test_passive_health_lab.py
 	python3 tests/integration/test_health_aware_selection.py
+	python3 tests/integration/test_remediation_executor.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -1325,3 +1337,42 @@ phase44-gate: $(REMEDIATION_POLICY_TEST) $(REMEDIATION_POLICY_LAB)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 44 gate passed: remediation requires strong evidence, applies capped exponential backoff, enforces rolling attempt budgets, resets safely after recovery, regressions, and sanitizers completed."
+
+
+$(REMEDIATION_EXECUTOR_TEST): tests/unit/test_remediation_executor.c src/remediation_executor.c include/remediation_executor.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		tests/unit/test_remediation_executor.c src/remediation_executor.c \
+		-o $(REMEDIATION_EXECUTOR_TEST)
+
+$(REMEDIATION_EXECUTOR_LAB): src/remediation_executor_lab.c src/remediation_executor.c include/remediation_executor.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		src/remediation_executor_lab.c src/remediation_executor.c \
+		-o $(REMEDIATION_EXECUTOR_LAB)
+
+remediation-executor-lab: $(REMEDIATION_EXECUTOR_LAB)
+	./$(REMEDIATION_EXECUTOR_LAB) --scenario graceful
+
+test-remediation-executor: $(REMEDIATION_EXECUTOR_TEST) $(REMEDIATION_EXECUTOR_LAB)
+	./$(REMEDIATION_EXECUTOR_TEST)
+	python3 tests/integration/test_remediation_executor.py
+
+sanitize-remediation-executor:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		tests/unit/test_remediation_executor.c src/remediation_executor.c \
+		-o $(SANITIZED_REMEDIATION_EXECUTOR_TEST)
+	./$(SANITIZED_REMEDIATION_EXECUTOR_TEST)
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		src/remediation_executor_lab.c src/remediation_executor.c \
+		-o $(SANITIZED_REMEDIATION_EXECUTOR_LAB)
+	REMEDIATION_EXECUTOR_LAB_BIN=$(SANITIZED_REMEDIATION_EXECUTOR_LAB) python3 tests/integration/test_remediation_executor.py
+
+phase45-gate: $(REMEDIATION_EXECUTOR_TEST) $(REMEDIATION_EXECUTOR_LAB)
+	./$(REMEDIATION_EXECUTOR_TEST)
+	python3 tests/integration/test_remediation_executor.py
+	$(MAKE) sanitize-remediation-executor
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 45 gate passed: approved remediation restarts exact process identities with pidfds, bounded SIGTERM/SIGKILL lifecycle control, verified replacement exec, stale-PID refusal, regressions, and sanitizers completed."

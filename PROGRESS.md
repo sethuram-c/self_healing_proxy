@@ -2178,7 +2178,7 @@ Next: Phase 44 - bounded remediation policy / restart decision model.
 
 ## Phase 44 - Bounded Remediation Policy
 
-**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+**Status:** COMPLETE
 
 ### Goal
 Decide when a backend is eligible for remediation without executing destructive actions prematurely or repeatedly.
@@ -2201,10 +2201,43 @@ Decide when a backend is eligible for remediation without executing destructive 
 ### Phase boundary
 Phase 44 returns a policy decision such as `RESTART_BACKEND`; it does not kill, signal, respawn, replace, or otherwise mutate a backend process.
 
-### Local quality gate pending
-Run `make phase44-gate` on Fedora. Completion requires the exact marker:
-
-`Phase 44 gate passed: remediation requires strong evidence, applies capped exponential backoff, enforces rolling attempt budgets, resets safely after recovery, regressions, and sanitizers completed.`
+### Quality gate
+PASS ON FEDORA (`make phase44-gate`).
 
 ### Next Phase
 Phase 45 - Remediation executor: safely turn an approved remediation decision into a supervised backend restart with identity checks and bounded lifecycle control.
+
+
+## Phase 45 - Remediation Executor
+
+**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+
+### Goal
+Safely execute one already-approved backend restart against the exact intended Linux process, with bounded termination and verified replacement startup.
+
+### Implemented
+- `include/remediation_executor.h`: process identity, executor configuration, statuses, and result contract.
+- `src/remediation_executor.c`: `/proc/<pid>/stat` start-time identity capture, pidfd acquisition, pidfd signaling, bounded poll-based termination, SIGTERM-to-SIGKILL escalation, fork/exec replacement with exec-failure handshake, and new identity capture.
+- `src/remediation_executor_lab.c`: graceful, forced-escalation, stale-identity, and spawn-failure scenarios using real child processes.
+- `tests/unit/test_remediation_executor.c`: identity and validation contract coverage.
+- `tests/integration/test_remediation_executor.py`: real process lifecycle assertions.
+- strict C11 plus ASan/UBSan targeted coverage.
+
+### Safety contract
+- Phase 44 decides **whether** to restart; Phase 45 only executes an approved restart.
+- Raw PID alone is insufficient identity. PID plus process start time must match.
+- A pidfd is acquired before signaling to avoid PID-reuse races during the termination operation.
+- SIGTERM is attempted first.
+- SIGKILL is used only after the bounded graceful timeout.
+- Replacement exec failure is synchronously observable; it is never silently reported as a successful restart.
+
+### Phase boundary
+Phase 45 restarts a single process command. It does not yet reconstruct namespace/cgroup isolation, manage dependency graphs, implement long-running supervision, or merge restart results back into all health/circuit state.
+
+### Local quality gate pending
+Run `make phase45-gate` on Fedora. Completion requires the exact marker:
+
+`Phase 45 gate passed: approved remediation restarts exact process identities with pidfds, bounded SIGTERM/SIGKILL lifecycle control, verified replacement exec, stale-PID refusal, regressions, and sanitizers completed.`
+
+### Next Phase
+Phase 46 - supervised recovery orchestration: connect restart results back to health/circuit state and require post-restart readiness before normal traffic returns.

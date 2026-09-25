@@ -942,3 +942,32 @@ make phase44-gate
 ```
 
 The phase boundary is intentional: `RESTART_BACKEND` is a policy decision only. Phase 44 does not send signals, kill processes, spawn replacements, or mutate isolation state.
+
+## Phase 45 - Remediation Executor
+
+Phase 45 turns an already-approved Phase 44 `RESTART_BACKEND` decision into a bounded Linux process restart. Policy remains outside the executor.
+
+Safety properties:
+- capture process identity as PID plus `/proc/<pid>/stat` start time;
+- acquire a pidfd for a stable reference to the exact task;
+- refuse stale/reused identities before signaling;
+- send SIGTERM first and wait only for the configured grace interval;
+- escalate to SIGKILL only when the exact process does not terminate in time;
+- monitor termination through the pidfd rather than polling a raw PID;
+- spawn the replacement through `fork` + `execvp` with a close-on-exec error pipe so exec failure is reported synchronously;
+- capture and return the new process identity;
+- report restart, stale identity, target-gone, signal, timeout, and spawn failures explicitly.
+
+Targeted commands:
+
+```bash
+make test-remediation-executor
+./build/remediation_executor_lab --scenario graceful
+./build/remediation_executor_lab --scenario escalate
+./build/remediation_executor_lab --scenario stale
+./build/remediation_executor_lab --scenario spawn-fail
+make sanitize-remediation-executor
+make phase45-gate
+```
+
+Phase boundary: Phase 45 executes one approved restart. It does not decide whether remediation is warranted, maintain the restart budget, recreate namespaces/cgroups, or yet supervise a long-lived fleet of replacements.
