@@ -2210,7 +2210,7 @@ Phase 45 - Remediation executor: safely turn an approved remediation decision in
 
 ## Phase 45 - Remediation Executor
 
-**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+**Status:** COMPLETE
 
 ### Goal
 Safely execute one already-approved backend restart against the exact intended Linux process, with bounded termination and verified replacement startup.
@@ -2234,10 +2234,45 @@ Safely execute one already-approved backend restart against the exact intended L
 ### Phase boundary
 Phase 45 restarts a single process command. It does not yet reconstruct namespace/cgroup isolation, manage dependency graphs, implement long-running supervision, or merge restart results back into all health/circuit state.
 
-### Local quality gate pending
-Run `make phase45-gate` on Fedora. Completion requires the exact marker:
-
-`Phase 45 gate passed: approved remediation restarts exact process identities with pidfds, bounded SIGTERM/SIGKILL lifecycle control, verified replacement exec, stale-PID refusal, regressions, and sanitizers completed.`
+### Quality gate
+PASS ON FEDORA (`make phase45-gate`).
 
 ### Next Phase
 Phase 46 - supervised recovery orchestration: connect restart results back to health/circuit state and require post-restart readiness before normal traffic returns.
+
+
+## Phase 46 - Supervised Recovery Orchestration
+
+**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+
+### Goal
+Keep a restarted backend quarantined until a bounded supervisor observes real TCP readiness, the Phase 39 recovery hysteresis reaches `HEALTHY`, and the Phase 43 circuit safely returns to `CLOSED`.
+
+### Implemented
+- `include/recovery_orchestrator.h`: quarantine/ready/failed state contract, startup deadline, readiness counters, and explicit failure reasons.
+- `src/recovery_orchestrator.c`: deterministic monotonic recovery state machine that consumes Phase 45 executor results, advances existing health/circuit state, and fails closed on startup deadline expiry.
+- `src/recovery_orchestrator_lab.c`: real restart + delayed TCP-listener worker scenarios proving quarantine, eventual readiness, startup timeout, and failed-restart containment.
+- `tests/unit/test_recovery_orchestrator.c`: deterministic state/timing tests including backward-time rejection and neutrality of startup probe failures.
+- `tests/integration/test_recovery_orchestrator.py`: real process and TCP readiness orchestration assertions.
+- `Makefile`: Phase 46 targeted build/test/sanitizer/gate integration plus inclusion in the normal regression suite.
+
+### Recovery contract
+- `exec()` success is necessary but not sufficient for traffic.
+- Replacement begins `QUARANTINED` and `can_route=0`.
+- Failed readiness probes during startup mean "not ready yet"; they reset the consecutive readiness streak but do not create fresh production-health failures.
+- Successful readiness probes feed the existing Phase 39 `RECOVERING -> HEALTHY` hysteresis.
+- A Phase 43 `HALF_OPEN` circuit receives one controlled readiness success and closes normally.
+- The backend becomes `READY` only when the readiness threshold is satisfied, health is `HEALTHY`, and circuit state is `CLOSED`.
+- Startup deadline expiry yields `FAILED/STARTUP_TIMEOUT` and remains unroutable.
+- A failed Phase 45 restart yields `FAILED/RESTART_NOT_COMPLETED` and never enters quarantine routing.
+
+### Phase boundary
+Phase 46 supervises one replacement through readiness and reintegration. It does not coordinate many simultaneous backend recoveries, reconstruct namespace/cgroup isolation, or impose a fleet-wide restart-storm budget.
+
+### Local quality gate pending
+Run `make phase46-gate` on Fedora. Completion requires the exact marker:
+
+`Phase 46 gate passed: restarted backends remain quarantined until bounded real readiness probes satisfy health/circuit recovery, startup deadlines fail closed, regressions, and sanitizers completed.`
+
+### Next Phase
+Phase 47 - fleet-wide healing coordination and restart-storm protection.

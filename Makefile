@@ -63,6 +63,10 @@ REMEDIATION_EXECUTOR_LAB := build/remediation_executor_lab
 REMEDIATION_EXECUTOR_TEST := build/test_remediation_executor
 SANITIZED_REMEDIATION_EXECUTOR_LAB := build/remediation_executor_lab-sanitized
 SANITIZED_REMEDIATION_EXECUTOR_TEST := build/test_remediation_executor-sanitized
+RECOVERY_ORCHESTRATOR_LAB := build/recovery_orchestrator_lab
+RECOVERY_ORCHESTRATOR_TEST := build/test_recovery_orchestrator
+SANITIZED_RECOVERY_ORCHESTRATOR_LAB := build/recovery_orchestrator_lab-sanitized
+SANITIZED_RECOVERY_ORCHESTRATOR_TEST := build/test_recovery_orchestrator-sanitized
 SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
@@ -170,6 +174,10 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	test-remediation-executor \
 	sanitize-remediation-executor \
 	phase45-gate \
+	recovery-orchestrator-lab \
+	test-recovery-orchestrator \
+	sanitize-recovery-orchestrator \
+	phase46-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -589,7 +597,8 @@ test-unit: \
 	$(HEALTH_PROBE_TEST) \
 	$(PASSIVE_HEALTH_TEST) \
 	$(HEALTH_AWARE_POOL_TEST) \
-	$(REMEDIATION_EXECUTOR_TEST)
+	$(REMEDIATION_EXECUTOR_TEST) \
+	$(RECOVERY_ORCHESTRATOR_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -614,6 +623,7 @@ test-unit: \
 	./$(PASSIVE_HEALTH_TEST)
 	./$(HEALTH_AWARE_POOL_TEST)
 	./$(REMEDIATION_EXECUTOR_TEST)
+	./$(RECOVERY_ORCHESTRATOR_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
@@ -629,7 +639,8 @@ test-integration: \
 	$(ACTIVE_HEALTH_PROBE_LAB) \
 	$(PASSIVE_HEALTH_LAB) \
 	$(HEALTH_AWARE_SELECTION_LAB) \
-	$(REMEDIATION_EXECUTOR_LAB)
+	$(REMEDIATION_EXECUTOR_LAB) \
+	$(RECOVERY_ORCHESTRATOR_LAB)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -662,6 +673,7 @@ test-integration: \
 	python3 tests/integration/test_passive_health_lab.py
 	python3 tests/integration/test_health_aware_selection.py
 	python3 tests/integration/test_remediation_executor.py
+	python3 tests/integration/test_recovery_orchestrator.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -1376,3 +1388,42 @@ phase45-gate: $(REMEDIATION_EXECUTOR_TEST) $(REMEDIATION_EXECUTOR_LAB)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 45 gate passed: approved remediation restarts exact process identities with pidfds, bounded SIGTERM/SIGKILL lifecycle control, verified replacement exec, stale-PID refusal, regressions, and sanitizers completed."
+
+
+$(RECOVERY_ORCHESTRATOR_TEST): tests/unit/test_recovery_orchestrator.c src/recovery_orchestrator.c src/backend_health.c src/circuit_breaker.c include/recovery_orchestrator.h include/backend_health.h include/circuit_breaker.h include/health_probe.h include/remediation_executor.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		tests/unit/test_recovery_orchestrator.c src/recovery_orchestrator.c src/backend_health.c src/circuit_breaker.c \
+		-o $(RECOVERY_ORCHESTRATOR_TEST)
+
+$(RECOVERY_ORCHESTRATOR_LAB): src/recovery_orchestrator_lab.c src/recovery_orchestrator.c src/remediation_executor.c src/health_probe.c src/backend_health.c src/circuit_breaker.c include/recovery_orchestrator.h include/remediation_executor.h include/health_probe.h include/backend_health.h include/circuit_breaker.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		src/recovery_orchestrator_lab.c src/recovery_orchestrator.c src/remediation_executor.c src/health_probe.c src/backend_health.c src/circuit_breaker.c \
+		-o $(RECOVERY_ORCHESTRATOR_LAB)
+
+recovery-orchestrator-lab: $(RECOVERY_ORCHESTRATOR_LAB)
+	./$(RECOVERY_ORCHESTRATOR_LAB) --scenario ready
+
+test-recovery-orchestrator: $(RECOVERY_ORCHESTRATOR_TEST) $(RECOVERY_ORCHESTRATOR_LAB)
+	./$(RECOVERY_ORCHESTRATOR_TEST)
+	python3 tests/integration/test_recovery_orchestrator.py
+
+sanitize-recovery-orchestrator:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		tests/unit/test_recovery_orchestrator.c src/recovery_orchestrator.c src/backend_health.c src/circuit_breaker.c \
+		-o $(SANITIZED_RECOVERY_ORCHESTRATOR_TEST)
+	./$(SANITIZED_RECOVERY_ORCHESTRATOR_TEST)
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		src/recovery_orchestrator_lab.c src/recovery_orchestrator.c src/remediation_executor.c src/health_probe.c src/backend_health.c src/circuit_breaker.c \
+		-o $(SANITIZED_RECOVERY_ORCHESTRATOR_LAB)
+	RECOVERY_ORCHESTRATOR_LAB_BIN=$(SANITIZED_RECOVERY_ORCHESTRATOR_LAB) python3 tests/integration/test_recovery_orchestrator.py
+
+phase46-gate: $(RECOVERY_ORCHESTRATOR_TEST) $(RECOVERY_ORCHESTRATOR_LAB)
+	./$(RECOVERY_ORCHESTRATOR_TEST)
+	python3 tests/integration/test_recovery_orchestrator.py
+	$(MAKE) sanitize-recovery-orchestrator
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 46 gate passed: restarted backends remain quarantined until bounded real readiness probes satisfy health/circuit recovery, startup deadlines fail closed, regressions, and sanitizers completed."

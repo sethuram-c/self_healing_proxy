@@ -971,3 +971,40 @@ make phase45-gate
 ```
 
 Phase boundary: Phase 45 executes one approved restart. It does not decide whether remediation is warranted, maintain the restart budget, recreate namespaces/cgroups, or yet supervise a long-lived fleet of replacements.
+
+
+## Phase 46 - Supervised Recovery Orchestration
+
+Phase 46 closes the safety gap between a successful replacement `exec()` and permission to receive production traffic. A new process starts in a quarantine state and is supervised through real nonblocking TCP readiness probes.
+
+Recovery is intentionally composed from earlier Stage 5 mechanisms rather than inventing new semantics: Phase 45 supplies the exact replacement identity, Phase 40 supplies real TCP probes, Phase 39 supplies recovery hysteresis, and Phase 43 supplies the circuit state. The orchestrator only declares `READY` when all of the following are true:
+
+```text
+replacement exec succeeded
+AND consecutive readiness threshold satisfied
+AND backend health == HEALTHY
+AND circuit == CLOSED
+```
+
+Before that point `recovery_orchestrator_can_route()` is false. A startup deadline bounds the entire recovery interval. If the replacement remains unavailable until the deadline, recovery ends in `FAILED / STARTUP_TIMEOUT` instead of leaking traffic to an unready backend.
+
+Startup probe failures are intentionally not counted as fresh production-health failures: while a replacement is quarantined, `ECONNREFUSED` often means the process has not bound its listening socket yet. Such failures reset the readiness streak and remain observable, but do not manufacture another remediation loop.
+
+Useful commands:
+
+```bash
+make test-recovery-orchestrator
+./build/recovery_orchestrator_lab --scenario ready
+./build/recovery_orchestrator_lab --scenario timeout
+./build/recovery_orchestrator_lab --scenario restart-fail
+make sanitize-recovery-orchestrator
+make phase46-gate
+```
+
+The Phase 46 completion marker is:
+
+```text
+Phase 46 gate passed: restarted backends remain quarantined until bounded real readiness probes satisfy health/circuit recovery, startup deadlines fail closed, regressions, and sanitizers completed.
+```
+
+Phase boundary: this phase supervises one replacement process. Fleet-wide concurrency limits, correlated multi-backend failures, and restart-storm coordination remain later Stage 5 work.
