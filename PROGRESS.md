@@ -2243,7 +2243,7 @@ Phase 46 - supervised recovery orchestration: connect restart results back to he
 
 ## Phase 46 - Supervised Recovery Orchestration
 
-**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+**Status:** COMPLETE
 
 ### Goal
 Keep a restarted backend quarantined until a bounded supervisor observes real TCP readiness, the Phase 39 recovery hysteresis reaches `HEALTHY`, and the Phase 43 circuit safely returns to `CLOSED`.
@@ -2269,10 +2269,44 @@ Keep a restarted backend quarantined until a bounded supervisor observes real TC
 ### Phase boundary
 Phase 46 supervises one replacement through readiness and reintegration. It does not coordinate many simultaneous backend recoveries, reconstruct namespace/cgroup isolation, or impose a fleet-wide restart-storm budget.
 
-### Local quality gate pending
-Run `make phase46-gate` on Fedora. Completion requires the exact marker:
-
-`Phase 46 gate passed: restarted backends remain quarantined until bounded real readiness probes satisfy health/circuit recovery, startup deadlines fail closed, regressions, and sanitizers completed.`
+### Quality gate
+PASS ON FEDORA (`make phase46-gate`).
 
 ### Next Phase
 Phase 47 - fleet-wide healing coordination and restart-storm protection.
+
+
+## Phase 47 - Fleet-Wide Healing Coordination and Restart-Storm Protection
+
+**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+
+### Goal
+Coordinate remediation admission across the entire backend fleet so correlated failures cannot trigger an unbounded restart storm or allow one noisy backend to monopolize healing capacity.
+
+### Implemented
+- `include/healing_coordinator.h`: fixed-size fleet coordinator contract, admission reasons, and global safety counters.
+- `src/healing_coordinator.c`: duplicate coalescing, monotonic-time validation, rolling fleet attempt budget, global concurrency cap, and round-robin pending admission.
+- `src/healing_coordinator_lab.c`: deterministic concurrency, fairness, and rolling-budget scenarios.
+- `tests/unit/test_healing_coordinator.c`: state, duplicate, concurrency, budget-aging, fairness, invalid-completion, and backward-time assertions.
+- `tests/integration/test_healing_coordinator.py`: CLI-level fleet behavior checks.
+- `Makefile`: normal/sanitized Phase 47 targets and full regression inclusion.
+
+### Coordination contract
+- A backend may be pending or in progress, never multiplied into several concurrent healing requests.
+- Global `max_concurrent` bounds simultaneous remediation executions across the fleet.
+- Global `max_attempts_per_window` bounds admitted remediation starts even if prior attempts finish quickly.
+- Denied requests remain pending; admission is retried when concurrency or budget becomes available.
+- Only admitted attempts consume the rolling budget.
+- A rotating `next_index` preserves fairness among pending backends.
+- Timing is deterministic and monotonic; no sleeps are embedded in the policy object.
+
+### Phase boundary
+Phase 47 coordinates *who may heal now*. It does not decide whether a backend deserves remediation (Phase 44), terminate/spawn processes (Phase 45), or supervise readiness (Phase 46). Namespace/cgroup reconstruction and final Stage 5 closure remain later phases.
+
+### Local quality gate pending
+Run `make phase47-gate` on Fedora. Completion requires the exact marker:
+
+`Phase 47 gate passed: fleet-wide healing enforces global concurrency and rolling restart budgets, preserves fair remediation admission, coalesces duplicate requests, regressions, and sanitizers completed.`
+
+### Next Phase
+Phase 48 - self-healing observability, end-to-end fault injection, and Stage 5 closure.

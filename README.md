@@ -1008,3 +1008,48 @@ Phase 46 gate passed: restarted backends remain quarantined until bounded real r
 ```
 
 Phase boundary: this phase supervises one replacement process. Fleet-wide concurrency limits, correlated multi-backend failures, and restart-storm coordination remain later Stage 5 work.
+
+## Phase 47 - Fleet-Wide Healing Coordination and Restart-Storm Protection
+
+Phase 47 coordinates remediation admission across the whole backend fleet. Earlier phases deliberately reason about one backend at a time; that is not sufficient when a shared dependency failure makes several backends request healing simultaneously.
+
+The coordinator is a bounded, single-threaded control-plane policy object. It does not execute restarts. Each backend may have at most one queued or in-progress remediation request. Admission is constrained by both a global concurrency limit and a rolling fleet-wide attempt budget. Pending backends are selected with a rotating cursor so a repeatedly failing backend cannot monopolize the healing slots.
+
+Default lab model:
+
+```text
+backend count                 4
+max concurrent remediations   2 (concurrency scenario) / 1 (fairness,budget)
+max attempts per window       3 (budget scenario)
+attempt window                100 simulated ns
+```
+
+Safety invariants:
+- fixed memory: at most 32 backend slots and 64 recent admitted attempts;
+- duplicate request for a pending/in-progress backend returns `EALREADY` rather than multiplying work;
+- global concurrency denial leaves the request pending and changes no in-progress state;
+- global rolling-budget denial leaves the request pending until capacity ages back in;
+- only an admitted remediation consumes the rolling attempt budget;
+- completion releases exactly one concurrency slot;
+- failed admission is side-effect free except observability counters;
+- selection starts from `next_index`, preserving fleet fairness across queued backends;
+- all timing is caller-supplied monotonic time; backward time is rejected with `ERANGE`.
+
+Useful commands:
+
+```bash
+make test-healing-coordinator
+./build/healing_coordinator_lab --scenario concurrency
+./build/healing_coordinator_lab --scenario fairness
+./build/healing_coordinator_lab --scenario budget
+make sanitize-healing-coordinator
+make phase47-gate
+```
+
+The Phase 47 completion marker is:
+
+```text
+Phase 47 gate passed: fleet-wide healing enforces global concurrency and rolling restart budgets, preserves fair remediation admission, coalesces duplicate requests, regressions, and sanitizers completed.
+```
+
+Phase boundary: Phase 47 only coordinates admission to remediation. Phase 44 still decides whether a backend deserves remediation; Phase 45 executes an admitted restart; Phase 46 supervises one replacement through recovery. Phase 47 does not reconstruct namespaces/cgroups, perform multi-process dependency ordering, or execute healing actions itself.

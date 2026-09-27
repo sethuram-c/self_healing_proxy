@@ -67,6 +67,10 @@ RECOVERY_ORCHESTRATOR_LAB := build/recovery_orchestrator_lab
 RECOVERY_ORCHESTRATOR_TEST := build/test_recovery_orchestrator
 SANITIZED_RECOVERY_ORCHESTRATOR_LAB := build/recovery_orchestrator_lab-sanitized
 SANITIZED_RECOVERY_ORCHESTRATOR_TEST := build/test_recovery_orchestrator-sanitized
+HEALING_COORDINATOR_LAB := build/healing_coordinator_lab
+HEALING_COORDINATOR_TEST := build/test_healing_coordinator
+SANITIZED_HEALING_COORDINATOR_LAB := build/healing_coordinator_lab-sanitized
+SANITIZED_HEALING_COORDINATOR_TEST := build/test_healing_coordinator-sanitized
 SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
@@ -178,6 +182,10 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	test-recovery-orchestrator \
 	sanitize-recovery-orchestrator \
 	phase46-gate \
+	healing-coordinator-lab \
+	test-healing-coordinator \
+	sanitize-healing-coordinator \
+	phase47-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -598,7 +606,8 @@ test-unit: \
 	$(PASSIVE_HEALTH_TEST) \
 	$(HEALTH_AWARE_POOL_TEST) \
 	$(REMEDIATION_EXECUTOR_TEST) \
-	$(RECOVERY_ORCHESTRATOR_TEST)
+	$(RECOVERY_ORCHESTRATOR_TEST) \
+	$(HEALING_COORDINATOR_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -624,6 +633,7 @@ test-unit: \
 	./$(HEALTH_AWARE_POOL_TEST)
 	./$(REMEDIATION_EXECUTOR_TEST)
 	./$(RECOVERY_ORCHESTRATOR_TEST)
+	./$(HEALING_COORDINATOR_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
@@ -640,7 +650,8 @@ test-integration: \
 	$(PASSIVE_HEALTH_LAB) \
 	$(HEALTH_AWARE_SELECTION_LAB) \
 	$(REMEDIATION_EXECUTOR_LAB) \
-	$(RECOVERY_ORCHESTRATOR_LAB)
+	$(RECOVERY_ORCHESTRATOR_LAB) \
+	$(HEALING_COORDINATOR_LAB)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -668,6 +679,7 @@ test-integration: \
 	python3 tests/integration/test_otel_metrics.py
 	python3 tests/integration/test_grafana_lgtm.py
 	python3 tests/integration/test_telemetry_overhead.py
+	python3 tests/integration/test_healing_coordinator.py
 	python3 tests/integration/test_health_state_lab.py
 	python3 tests/integration/test_active_health_probe.py
 	python3 tests/integration/test_passive_health_lab.py
@@ -1427,3 +1439,41 @@ phase46-gate: $(RECOVERY_ORCHESTRATOR_TEST) $(RECOVERY_ORCHESTRATOR_LAB)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 46 gate passed: restarted backends remain quarantined until bounded real readiness probes satisfy health/circuit recovery, startup deadlines fail closed, regressions, and sanitizers completed."
+
+$(HEALING_COORDINATOR_TEST): tests/unit/test_healing_coordinator.c src/healing_coordinator.c include/healing_coordinator.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		tests/unit/test_healing_coordinator.c src/healing_coordinator.c \
+		-o $(HEALING_COORDINATOR_TEST)
+
+$(HEALING_COORDINATOR_LAB): src/healing_coordinator_lab.c src/healing_coordinator.c include/healing_coordinator.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		src/healing_coordinator_lab.c src/healing_coordinator.c \
+		-o $(HEALING_COORDINATOR_LAB)
+
+healing-coordinator-lab: $(HEALING_COORDINATOR_LAB)
+	./$(HEALING_COORDINATOR_LAB) --scenario concurrency
+
+test-healing-coordinator: $(HEALING_COORDINATOR_TEST) $(HEALING_COORDINATOR_LAB)
+	./$(HEALING_COORDINATOR_TEST)
+	python3 tests/integration/test_healing_coordinator.py
+
+sanitize-healing-coordinator:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		tests/unit/test_healing_coordinator.c src/healing_coordinator.c \
+		-o $(SANITIZED_HEALING_COORDINATOR_TEST)
+	./$(SANITIZED_HEALING_COORDINATOR_TEST)
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		src/healing_coordinator_lab.c src/healing_coordinator.c \
+		-o $(SANITIZED_HEALING_COORDINATOR_LAB)
+	HEALING_COORDINATOR_LAB_BIN=$(SANITIZED_HEALING_COORDINATOR_LAB) python3 tests/integration/test_healing_coordinator.py
+
+phase47-gate: $(HEALING_COORDINATOR_TEST) $(HEALING_COORDINATOR_LAB)
+	./$(HEALING_COORDINATOR_TEST)
+	python3 tests/integration/test_healing_coordinator.py
+	$(MAKE) sanitize-healing-coordinator
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 47 gate passed: fleet-wide healing enforces global concurrency and rolling restart budgets, preserves fair remediation admission, coalesces duplicate requests, regressions, and sanitizers completed."
