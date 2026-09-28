@@ -71,6 +71,10 @@ HEALING_COORDINATOR_LAB := build/healing_coordinator_lab
 HEALING_COORDINATOR_TEST := build/test_healing_coordinator
 SANITIZED_HEALING_COORDINATOR_LAB := build/healing_coordinator_lab-sanitized
 SANITIZED_HEALING_COORDINATOR_TEST := build/test_healing_coordinator-sanitized
+HEALING_EVENT_TEST := build/test_healing_event
+SELF_HEALING_FAULT_LAB := build/self_healing_fault_lab
+SANITIZED_HEALING_EVENT_TEST := build/test_healing_event-sanitized
+SANITIZED_SELF_HEALING_FAULT_LAB := build/self_healing_fault_lab-sanitized
 SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
@@ -186,6 +190,11 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	test-healing-coordinator \
 	sanitize-healing-coordinator \
 	phase47-gate \
+	self-healing-fault-lab \
+	test-self-healing-observability \
+	sanitize-self-healing-observability \
+	phase48-gate \
+	stage5-gate \
 	tcp-listener \
 	epoll-server \
 	mock-backend-a \
@@ -607,7 +616,8 @@ test-unit: \
 	$(HEALTH_AWARE_POOL_TEST) \
 	$(REMEDIATION_EXECUTOR_TEST) \
 	$(RECOVERY_ORCHESTRATOR_TEST) \
-	$(HEALING_COORDINATOR_TEST)
+	$(HEALING_COORDINATOR_TEST) \
+	$(HEALING_EVENT_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -634,6 +644,7 @@ test-unit: \
 	./$(REMEDIATION_EXECUTOR_TEST)
 	./$(RECOVERY_ORCHESTRATOR_TEST)
 	./$(HEALING_COORDINATOR_TEST)
+	./$(HEALING_EVENT_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
@@ -651,7 +662,8 @@ test-integration: \
 	$(HEALTH_AWARE_SELECTION_LAB) \
 	$(REMEDIATION_EXECUTOR_LAB) \
 	$(RECOVERY_ORCHESTRATOR_LAB) \
-	$(HEALING_COORDINATOR_LAB)
+	$(HEALING_COORDINATOR_LAB) \
+	$(SELF_HEALING_FAULT_LAB)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -686,6 +698,7 @@ test-integration: \
 	python3 tests/integration/test_health_aware_selection.py
 	python3 tests/integration/test_remediation_executor.py
 	python3 tests/integration/test_recovery_orchestrator.py
+	python3 tests/integration/test_self_healing_faults.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -903,6 +916,7 @@ sanitize: \
 	sanitize-json-logs \
 	sanitize-telemetry-overhead \
 	sanitize-backend-health \
+	sanitize-self-healing-observability \
 	sanitize-tcp \
 	sanitize-epoll
 
@@ -1477,3 +1491,62 @@ phase47-gate: $(HEALING_COORDINATOR_TEST) $(HEALING_COORDINATOR_LAB)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 47 gate passed: fleet-wide healing enforces global concurrency and rolling restart budgets, preserves fair remediation admission, coalesces duplicate requests, regressions, and sanitizers completed."
+
+
+$(HEALING_EVENT_TEST): tests/unit/test_healing_event.c src/healing_event.c include/healing_event.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		tests/unit/test_healing_event.c src/healing_event.c \
+		-o $(HEALING_EVENT_TEST)
+
+$(SELF_HEALING_FAULT_LAB): src/self_healing_fault_lab.c src/healing_event.c src/backend_health.c src/circuit_breaker.c src/remediation_policy.c src/healing_coordinator.c src/recovery_orchestrator.c include/healing_event.h include/backend_health.h include/circuit_breaker.h include/remediation_policy.h include/healing_coordinator.h include/recovery_orchestrator.h include/health_probe.h include/remediation_executor.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude \
+		src/self_healing_fault_lab.c src/healing_event.c src/backend_health.c src/circuit_breaker.c src/remediation_policy.c src/healing_coordinator.c src/recovery_orchestrator.c \
+		-o $(SELF_HEALING_FAULT_LAB)
+
+self-healing-fault-lab: $(SELF_HEALING_FAULT_LAB)
+	./$(SELF_HEALING_FAULT_LAB) --scenario recover
+
+test-self-healing-observability: $(HEALING_EVENT_TEST) $(SELF_HEALING_FAULT_LAB)
+	./$(HEALING_EVENT_TEST)
+	python3 tests/integration/test_self_healing_faults.py
+
+sanitize-self-healing-observability:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		tests/unit/test_healing_event.c src/healing_event.c \
+		-o $(SANITIZED_HEALING_EVENT_TEST)
+	./$(SANITIZED_HEALING_EVENT_TEST)
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		src/self_healing_fault_lab.c src/healing_event.c src/backend_health.c src/circuit_breaker.c src/remediation_policy.c src/healing_coordinator.c src/recovery_orchestrator.c \
+		-o $(SANITIZED_SELF_HEALING_FAULT_LAB)
+	SELF_HEALING_FAULT_LAB_BIN=$(SANITIZED_SELF_HEALING_FAULT_LAB) python3 tests/integration/test_self_healing_faults.py
+
+phase48-gate: $(HEALING_EVENT_TEST) $(SELF_HEALING_FAULT_LAB)
+	$(MAKE) test-backend-health
+	$(MAKE) test-active-health-probe
+	$(MAKE) test-passive-health
+	$(MAKE) test-health-aware-selection
+	$(MAKE) test-circuit-breaker
+	$(MAKE) test-remediation-policy
+	$(MAKE) test-remediation-executor
+	$(MAKE) test-recovery-orchestrator
+	$(MAKE) test-healing-coordinator
+	$(MAKE) test-self-healing-observability
+	$(MAKE) sanitize-backend-health
+	$(MAKE) sanitize-active-health-probe
+	$(MAKE) sanitize-passive-health
+	$(MAKE) sanitize-health-aware-selection
+	$(MAKE) sanitize-circuit-breaker
+	$(MAKE) sanitize-remediation-policy
+	$(MAKE) sanitize-remediation-executor
+	$(MAKE) sanitize-recovery-orchestrator
+	$(MAKE) sanitize-healing-coordinator
+	$(MAKE) sanitize-self-healing-observability
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 48 gate passed: self-healing emits structured end-to-end events, fault injection proves containment/remediation/recovery and restart-storm suppression, regressions, and sanitizers completed."
+	@echo "Stage 5 gate passed: health detection, active/passive evidence, health-aware routing, circuit breaking, bounded remediation, safe restart, supervised recovery, fleet coordination, and observable fault-injected self-healing completed."
+
+stage5-gate: phase48-gate

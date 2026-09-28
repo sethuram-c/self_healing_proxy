@@ -2278,7 +2278,7 @@ Phase 47 - fleet-wide healing coordination and restart-storm protection.
 
 ## Phase 47 - Fleet-Wide Healing Coordination and Restart-Storm Protection
 
-**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+**Status:** COMPLETE
 
 ### Goal
 Coordinate remediation admission across the entire backend fleet so correlated failures cannot trigger an unbounded restart storm or allow one noisy backend to monopolize healing capacity.
@@ -2303,10 +2303,40 @@ Coordinate remediation admission across the entire backend fleet so correlated f
 ### Phase boundary
 Phase 47 coordinates *who may heal now*. It does not decide whether a backend deserves remediation (Phase 44), terminate/spawn processes (Phase 45), or supervise readiness (Phase 46). Namespace/cgroup reconstruction and final Stage 5 closure remain later phases.
 
-### Local quality gate pending
-Run `make phase47-gate` on Fedora. Completion requires the exact marker:
-
-`Phase 47 gate passed: fleet-wide healing enforces global concurrency and rolling restart budgets, preserves fair remediation admission, coalesces duplicate requests, regressions, and sanitizers completed.`
+### Quality gate
+PASS ON FEDORA (`make phase47-gate`).
 
 ### Next Phase
 Phase 48 - self-healing observability, end-to-end fault injection, and Stage 5 closure.
+
+
+## Phase 48 - Self-Healing Observability, Fault Injection, and Stage 5 Closure
+
+**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+
+### Goal
+Make the entire Stage 5 control path observable with a bounded structured event schema, inject deterministic failure/recovery scenarios, prove restart-storm suppression, and close Stage 5 with an explicit gate that re-runs every self-healing phase.
+
+### Implemented
+- `include/healing_event.h`: fixed-size `shp.healing.v1` structured event contract.
+- `src/healing_event.c`: bounded RFC8259-safe JSON serialization with no heap allocation.
+- `src/self_healing_fault_lab.c`: deterministic end-to-end failure -> health/circuit containment -> remediation approval -> fleet admission -> quarantine -> readiness -> restored routing scenario, plus restart-storm suppression.
+- `tests/unit/test_healing_event.c`: schema, escaping, invalid input, and bounded-output tests.
+- `tests/integration/test_self_healing_faults.py`: parses emitted JSON and asserts the causal sequence and final state.
+- `Makefile`: targeted Phase 48 build/test/sanitizer targets plus an explicit Stage 5 closure gate that reruns Phases 39-48 before global regressions.
+
+### Observability contract
+Each event contains `schema`, `timestamp_ns`, monotonic `sequence`, `backend`, `event`, `health_state`, `circuit_state`, `recovery_state`, `action`, and `reason`. Failure-path serialization is fixed-buffer and heap-free.
+
+### Fault-injection contract
+The recovery scenario injects three backend failures, requires `UNHEALTHY + OPEN`, approves bounded remediation, admits it through the fleet coordinator, quarantines a synthetic successful replacement, feeds two successful readiness observations through the existing hysteresis, and proves final `HEALTHY + CLOSED + READY + ROUTE_ENABLED`. The storm scenario proves both `CONCURRENCY_LIMIT` and `WINDOW_BUDGET` suppression are emitted and machine-parseable.
+
+### Local quality gate pending
+Run `make phase48-gate` on Fedora. Completion requires both exact markers:
+
+`Phase 48 gate passed: self-healing emits structured end-to-end events, fault injection proves containment/remediation/recovery and restart-storm suppression, regressions, and sanitizers completed.`
+
+`Stage 5 gate passed: health detection, active/passive evidence, health-aware routing, circuit breaking, bounded remediation, safe restart, supervised recovery, fleet coordination, and observable fault-injected self-healing completed.`
+
+### Next Stage
+After these markers pass, proceed to Stage 6, Phase 49 - edge-awareness foundations.

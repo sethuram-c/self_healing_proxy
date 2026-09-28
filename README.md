@@ -1053,3 +1053,39 @@ Phase 47 gate passed: fleet-wide healing enforces global concurrency and rolling
 ```
 
 Phase boundary: Phase 47 only coordinates admission to remediation. Phase 44 still decides whether a backend deserves remediation; Phase 45 executes an admitted restart; Phase 46 supervises one replacement through recovery. Phase 47 does not reconstruct namespaces/cgroups, perform multi-process dependency ordering, or execute healing actions itself.
+
+
+## Phase 48 - Self-Healing Observability, Fault Injection, and Stage 5 Closure
+
+Phase 48 closes Stage 5 by making healing transitions machine-readable and then using deterministic fault injection to prove the control path rather than merely testing isolated state machines. The new `shp.healing.v1` JSON schema carries monotonic sequence, backend, event, health/circuit/recovery states, action, and reason in a bounded fixed buffer with RFC8259 escaping.
+
+The recovery scenario proves this causal chain:
+
+```text
+baseline HEALTHY/CLOSED
+  -> three injected backend failures
+  -> UNHEALTHY + OPEN
+  -> remediation approved
+  -> fleet admission allowed
+  -> replacement quarantined
+  -> readiness success #1
+  -> readiness success #2
+  -> HEALTHY + CLOSED + READY
+  -> ROUTE_ENABLED
+```
+
+The restart-storm scenario separately proves that global `CONCURRENCY_LIMIT` and `WINDOW_BUDGET` denials are observable events rather than silent policy decisions.
+
+Useful commands:
+
+```bash
+make test-self-healing-observability
+./build/self_healing_fault_lab --scenario recover
+./build/self_healing_fault_lab --scenario storm
+make sanitize-self-healing-observability
+make phase48-gate
+```
+
+`phase48-gate` is intentionally stronger than a normal phase gate: it explicitly reruns the targeted Stage 5 tests and sanitizers for Phases 39 through 48, then runs the global regression and sanitizer suites. Successful closure prints both the Phase 48 marker and the Stage 5 marker.
+
+Phase boundary: Phase 48 closes the self-healing stage. It does not introduce edge locality, topology-aware routing, edge failover policy, final performance tuning, packaging, or release engineering; those begin in Stage 6.
