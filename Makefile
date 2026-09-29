@@ -75,6 +75,10 @@ HEALING_EVENT_TEST := build/test_healing_event
 SELF_HEALING_FAULT_LAB := build/self_healing_fault_lab
 SANITIZED_HEALING_EVENT_TEST := build/test_healing_event-sanitized
 SANITIZED_SELF_HEALING_FAULT_LAB := build/self_healing_fault_lab-sanitized
+EDGE_AWARE_SELECTION_LAB := build/edge_aware_selection_lab
+EDGE_AWARE_POOL_TEST := build/test_edge_aware_pool
+SANITIZED_EDGE_AWARE_SELECTION_LAB := build/edge_aware_selection_lab-sanitized
+SANITIZED_EDGE_AWARE_POOL_TEST := build/test_edge_aware_pool-sanitized
 SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
@@ -1550,3 +1554,30 @@ phase48-gate: $(HEALING_EVENT_TEST) $(SELF_HEALING_FAULT_LAB)
 	@echo "Stage 5 gate passed: health detection, active/passive evidence, health-aware routing, circuit breaking, bounded remediation, safe restart, supervised recovery, fleet coordination, and observable fault-injected self-healing completed."
 
 stage5-gate: phase48-gate
+
+
+$(EDGE_AWARE_POOL_TEST): tests/unit/test_edge_aware_pool.c src/edge_aware_pool.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c include/edge_aware_pool.h include/edge_locality.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude tests/unit/test_edge_aware_pool.c src/edge_aware_pool.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(EDGE_AWARE_POOL_TEST)
+
+$(EDGE_AWARE_SELECTION_LAB): src/edge_aware_selection_lab.c src/edge_aware_pool.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c include/edge_aware_pool.h include/edge_locality.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude src/edge_aware_selection_lab.c src/edge_aware_pool.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(EDGE_AWARE_SELECTION_LAB)
+
+test-edge-aware-selection: $(EDGE_AWARE_POOL_TEST) $(EDGE_AWARE_SELECTION_LAB)
+	./$(EDGE_AWARE_POOL_TEST)
+	python3 tests/integration/test_edge_aware_selection.py
+
+sanitize-edge-aware-selection:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude tests/unit/test_edge_aware_pool.c src/edge_aware_pool.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(SANITIZED_EDGE_AWARE_POOL_TEST)
+	./$(SANITIZED_EDGE_AWARE_POOL_TEST)
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude src/edge_aware_selection_lab.c src/edge_aware_pool.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(SANITIZED_EDGE_AWARE_SELECTION_LAB)
+	EDGE_AWARE_SELECTION_LAB_BIN=$(SANITIZED_EDGE_AWARE_SELECTION_LAB) python3 tests/integration/test_edge_aware_selection.py
+
+phase49-gate: $(EDGE_AWARE_POOL_TEST) $(EDGE_AWARE_SELECTION_LAB)
+	$(MAKE) test-edge-aware-selection
+	$(MAKE) sanitize-edge-aware-selection
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 49 gate passed: explicit region/zone/site metadata prefers nearest eligible backends, preserves fair selection within locality tiers, falls back safely across locality boundaries, regressions, and sanitizers completed."

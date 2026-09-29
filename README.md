@@ -1089,3 +1089,18 @@ make phase48-gate
 `phase48-gate` is intentionally stronger than a normal phase gate: it explicitly reruns the targeted Stage 5 tests and sanitizers for Phases 39 through 48, then runs the global regression and sanitizer suites. Successful closure prints both the Phase 48 marker and the Stage 5 marker.
 
 Phase boundary: Phase 48 closes the self-healing stage. It does not introduce edge locality, topology-aware routing, edge failover policy, final performance tuning, packaging, or release engineering; those begin in Stage 6.
+
+## Phase 49 - Edge-Awareness Foundations
+
+Phase 49 introduces bounded `region`, `zone`, and `site` metadata and a deterministic locality ranking: SITE, ZONE, REGION, REMOTE. Selection first applies existing safety constraints (health eligibility, circuit permission, connection capacity), then chooses the nearest locality tier that still has a usable backend, preserving the existing round-robin cursor within that tier. If the nearest tier is unavailable it falls back outward; if every backend is unsafe it fails closed.
+
+Useful commands:
+
+```bash
+make test-edge-aware-selection
+./build/edge_aware_selection_lab --scenario prefer-local
+./build/edge_aware_selection_lab --scenario fallback
+./build/edge_aware_selection_lab --scenario fail-closed
+make sanitize-edge-aware-selection
+make phase49-gate
+```

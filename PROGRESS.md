@@ -2312,7 +2312,7 @@ Phase 48 - self-healing observability, end-to-end fault injection, and Stage 5 c
 
 ## Phase 48 - Self-Healing Observability, Fault Injection, and Stage 5 Closure
 
-**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+**Status:** COMPLETE
 
 ### Goal
 Make the entire Stage 5 control path observable with a bounded structured event schema, inject deterministic failure/recovery scenarios, prove restart-storm suppression, and close Stage 5 with an explicit gate that re-runs every self-healing phase.
@@ -2340,3 +2340,26 @@ Run `make phase48-gate` on Fedora. Completion requires both exact markers:
 
 ### Next Stage
 After these markers pass, proceed to Stage 6, Phase 49 - edge-awareness foundations.
+
+
+## Phase 49 - Edge-Awareness Foundations
+
+**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+
+### Goal
+Introduce explicit region/zone/site metadata and locality-aware backend selection without weakening health, circuit, capacity, or fail-closed safety.
+
+### Implemented
+- `include/edge_locality.h` / `src/edge_locality.c`: bounded locality metadata and deterministic SITE/ZONE/REGION/REMOTE ranking.
+- `include/edge_aware_pool.h` / `src/edge_aware_pool.c`: locality-preferred selector layered on health, circuit, and capacity constraints.
+- `src/edge_aware_selection_lab.c`: local preference, cross-zone/remote fallback, and all-unavailable scenarios.
+- Unit and integration tests plus sanitizer and full regression gate.
+
+### Selection contract
+Prefer the best locality tier that currently contains at least one eligible backend. Preserve round-robin cursor fairness within that tier. Never choose a closer backend that is unhealthy, circuit-blocked, or saturated. If no local tier is usable, degrade from SITE -> ZONE -> REGION -> REMOTE. If no backend is safe, return no selection without mutating cursor/accounting.
+
+### Quality gate
+Run `make phase49-gate` on Fedora.
+
+### Next Phase
+Phase 50 - measured latency-aware routing signals.
