@@ -1104,3 +1104,30 @@ make test-edge-aware-selection
 make sanitize-edge-aware-selection
 make phase49-gate
 ```
+
+## Phase 50 - Latency-Aware Routing Signals
+
+Phase 50 adds bounded per-backend latency measurements without weakening Phase 49 locality or Stage 5 safety. Each backend maintains an integer EWMA with caller-supplied monotonic sample timestamps and a freshness deadline. Selection first finds the best safe locality tier, then considers only fresh latency signals inside that tier. Candidates within `latency_slack_ns` of the fastest fresh EWMA remain eligible and share traffic through the existing round-robin cursor. If no fresh measurements exist, the selector falls back to ordinary round-robin within the best safe locality tier.
+
+Safety invariants:
+- locality remains stronger than latency: a remote 1 ms backend does not outrank a usable SITE-local backend;
+- stale measurements lose authority automatically;
+- latency samples are fixed-size state with no heap allocation;
+- EWMA uses bounded integer arithmetic and no floating-point dependency;
+- tiny timing differences do not force single-backend pinning because a configurable slack defines a near-equal cohort;
+- missing measurements do not fail routing; they trigger deterministic round-robin fallback when no fresh samples exist;
+- health, circuit, and capacity checks still gate every candidate before latency is considered.
+
+Useful commands:
+
+```bash
+make test-latency-aware-selection
+./build/latency_aware_selection_lab --scenario faster
+./build/latency_aware_selection_lab --scenario stale
+./build/latency_aware_selection_lab --scenario locality
+./build/latency_aware_selection_lab --scenario no-samples
+make sanitize-latency-aware-selection
+make phase50-gate
+```
+
+Phase boundary: Phase 50 provides smoothed, freshness-bounded latency signals and uses them only as a preference inside an already-safe locality tier. It does not yet build weighted routing, active exploration, percentile estimators, load-aware scoring, or adaptive traffic weights.

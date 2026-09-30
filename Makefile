@@ -79,6 +79,10 @@ EDGE_AWARE_SELECTION_LAB := build/edge_aware_selection_lab
 EDGE_AWARE_POOL_TEST := build/test_edge_aware_pool
 SANITIZED_EDGE_AWARE_SELECTION_LAB := build/edge_aware_selection_lab-sanitized
 SANITIZED_EDGE_AWARE_POOL_TEST := build/test_edge_aware_pool-sanitized
+LATENCY_AWARE_SELECTION_LAB := build/latency_aware_selection_lab
+LATENCY_AWARE_POOL_TEST := build/test_latency_aware_pool
+SANITIZED_LATENCY_AWARE_SELECTION_LAB := build/latency_aware_selection_lab-sanitized
+SANITIZED_LATENCY_AWARE_POOL_TEST := build/test_latency_aware_pool-sanitized
 SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
@@ -197,6 +201,7 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	self-healing-fault-lab \
 	test-self-healing-observability \
 	sanitize-self-healing-observability \
+	sanitize-latency-aware-selection \
 	phase48-gate \
 	stage5-gate \
 	tcp-listener \
@@ -621,7 +626,8 @@ test-unit: \
 	$(REMEDIATION_EXECUTOR_TEST) \
 	$(RECOVERY_ORCHESTRATOR_TEST) \
 	$(HEALING_COORDINATOR_TEST) \
-	$(HEALING_EVENT_TEST)
+	$(HEALING_EVENT_TEST) \
+	$(LATENCY_AWARE_POOL_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -649,6 +655,7 @@ test-unit: \
 	./$(RECOVERY_ORCHESTRATOR_TEST)
 	./$(HEALING_COORDINATOR_TEST)
 	./$(HEALING_EVENT_TEST)
+	./$(LATENCY_AWARE_POOL_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
@@ -667,7 +674,8 @@ test-integration: \
 	$(REMEDIATION_EXECUTOR_LAB) \
 	$(RECOVERY_ORCHESTRATOR_LAB) \
 	$(HEALING_COORDINATOR_LAB) \
-	$(SELF_HEALING_FAULT_LAB)
+	$(SELF_HEALING_FAULT_LAB) \
+	$(LATENCY_AWARE_SELECTION_LAB)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -703,6 +711,7 @@ test-integration: \
 	python3 tests/integration/test_remediation_executor.py
 	python3 tests/integration/test_recovery_orchestrator.py
 	python3 tests/integration/test_self_healing_faults.py
+	python3 tests/integration/test_latency_aware_selection.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -1581,3 +1590,30 @@ phase49-gate: $(EDGE_AWARE_POOL_TEST) $(EDGE_AWARE_SELECTION_LAB)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 49 gate passed: explicit region/zone/site metadata prefers nearest eligible backends, preserves fair selection within locality tiers, falls back safely across locality boundaries, regressions, and sanitizers completed."
+
+
+$(LATENCY_AWARE_POOL_TEST): tests/unit/test_latency_aware_pool.c src/latency_aware_pool.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c include/latency_aware_pool.h include/latency_signal.h include/edge_locality.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude tests/unit/test_latency_aware_pool.c src/latency_aware_pool.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(LATENCY_AWARE_POOL_TEST)
+
+$(LATENCY_AWARE_SELECTION_LAB): src/latency_aware_selection_lab.c src/latency_aware_pool.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c include/latency_aware_pool.h include/latency_signal.h include/edge_locality.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude src/latency_aware_selection_lab.c src/latency_aware_pool.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(LATENCY_AWARE_SELECTION_LAB)
+
+test-latency-aware-selection: $(LATENCY_AWARE_POOL_TEST) $(LATENCY_AWARE_SELECTION_LAB)
+	./$(LATENCY_AWARE_POOL_TEST)
+	python3 tests/integration/test_latency_aware_selection.py
+
+sanitize-latency-aware-selection:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude tests/unit/test_latency_aware_pool.c src/latency_aware_pool.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(SANITIZED_LATENCY_AWARE_POOL_TEST)
+	./$(SANITIZED_LATENCY_AWARE_POOL_TEST)
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude src/latency_aware_selection_lab.c src/latency_aware_pool.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(SANITIZED_LATENCY_AWARE_SELECTION_LAB)
+	LATENCY_AWARE_SELECTION_LAB_BIN=$(SANITIZED_LATENCY_AWARE_SELECTION_LAB) python3 tests/integration/test_latency_aware_selection.py
+
+phase50-gate: $(LATENCY_AWARE_POOL_TEST) $(LATENCY_AWARE_SELECTION_LAB)
+	$(MAKE) test-latency-aware-selection
+	$(MAKE) sanitize-latency-aware-selection
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 50 gate passed: bounded fresh EWMA latency signals refine selection within the best safe locality tier, stale data loses authority, near-equal candidates preserve fairness, regressions, and sanitizers completed."

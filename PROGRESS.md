@@ -2344,7 +2344,7 @@ After these markers pass, proceed to Stage 6, Phase 49 - edge-awareness foundati
 
 ## Phase 49 - Edge-Awareness Foundations
 
-**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+**Status:** COMPLETE
 
 ### Goal
 Introduce explicit region/zone/site metadata and locality-aware backend selection without weakening health, circuit, capacity, or fail-closed safety.
@@ -2359,7 +2359,32 @@ Introduce explicit region/zone/site metadata and locality-aware backend selectio
 Prefer the best locality tier that currently contains at least one eligible backend. Preserve round-robin cursor fairness within that tier. Never choose a closer backend that is unhealthy, circuit-blocked, or saturated. If no local tier is usable, degrade from SITE -> ZONE -> REGION -> REMOTE. If no backend is safe, return no selection without mutating cursor/accounting.
 
 ### Quality gate
-Run `make phase49-gate` on Fedora.
+PASS ON FEDORA (`make phase49-gate`).
 
 ### Next Phase
 Phase 50 - measured latency-aware routing signals.
+
+
+## Phase 50 - Latency-Aware Routing Signals
+
+**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+
+### Goal
+Add bounded, freshness-aware latency measurements and use them to refine backend choice only within the best safe locality tier established by Phase 49.
+
+### Implemented
+- `include/latency_signal.h` / `src/latency_signal.c`: fixed-memory integer EWMA, monotonic sample validation, and freshness expiry.
+- `include/latency_aware_pool.h` / `src/latency_aware_pool.c`: latency-refined selector layered on health, circuit, capacity, and locality constraints.
+- `src/latency_aware_selection_lab.c`: low-latency cohort, stale-sample, locality-precedence, and no-sample fallback scenarios.
+- `tests/unit/test_latency_aware_pool.c`: EWMA arithmetic, exact freshness boundary, invalid config, stale authority, locality precedence, fairness/slack, and no-sample fallback.
+- `tests/integration/test_latency_aware_selection.py`: CLI-level behavior assertions.
+- `Makefile`: targeted normal/sanitized tests plus Phase 50 full regression gate.
+
+### Routing contract
+Selection first finds the nearest locality tier containing a backend that is health-eligible, circuit-permitted, and below its connection limit. Fresh EWMA values are then compared only inside that tier. All candidates whose EWMA is within `latency_slack_ns` of the fastest fresh signal form the eligible latency cohort and preserve round-robin fairness. Stale signals are ignored. If the tier has no fresh signals, selection falls back to the existing round-robin order rather than failing.
+
+### Quality gate
+Run `make phase50-gate` on Fedora.
+
+### Next Phase
+Phase 51 - adaptive load/latency scoring and bounded weighted routing.
