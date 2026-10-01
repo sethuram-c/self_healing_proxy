@@ -83,6 +83,10 @@ LATENCY_AWARE_SELECTION_LAB := build/latency_aware_selection_lab
 LATENCY_AWARE_POOL_TEST := build/test_latency_aware_pool
 SANITIZED_LATENCY_AWARE_SELECTION_LAB := build/latency_aware_selection_lab-sanitized
 SANITIZED_LATENCY_AWARE_POOL_TEST := build/test_latency_aware_pool-sanitized
+ADAPTIVE_AWARE_SELECTION_LAB := build/adaptive_aware_selection_lab
+ADAPTIVE_AWARE_POOL_TEST := build/test_adaptive_aware_pool
+SANITIZED_ADAPTIVE_AWARE_SELECTION_LAB := build/adaptive_aware_selection_lab-sanitized
+SANITIZED_ADAPTIVE_AWARE_POOL_TEST := build/test_adaptive_aware_pool-sanitized
 SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
@@ -202,6 +206,9 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	test-self-healing-observability \
 	sanitize-self-healing-observability \
 	sanitize-latency-aware-selection \
+	test-adaptive-aware-selection \
+	sanitize-adaptive-aware-selection \
+	phase51-gate \
 	phase48-gate \
 	stage5-gate \
 	tcp-listener \
@@ -627,7 +634,8 @@ test-unit: \
 	$(RECOVERY_ORCHESTRATOR_TEST) \
 	$(HEALING_COORDINATOR_TEST) \
 	$(HEALING_EVENT_TEST) \
-	$(LATENCY_AWARE_POOL_TEST)
+	$(LATENCY_AWARE_POOL_TEST) \
+	$(ADAPTIVE_AWARE_POOL_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -656,6 +664,7 @@ test-unit: \
 	./$(HEALING_COORDINATOR_TEST)
 	./$(HEALING_EVENT_TEST)
 	./$(LATENCY_AWARE_POOL_TEST)
+	./$(ADAPTIVE_AWARE_POOL_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
@@ -675,7 +684,8 @@ test-integration: \
 	$(RECOVERY_ORCHESTRATOR_LAB) \
 	$(HEALING_COORDINATOR_LAB) \
 	$(SELF_HEALING_FAULT_LAB) \
-	$(LATENCY_AWARE_SELECTION_LAB)
+	$(LATENCY_AWARE_SELECTION_LAB) \
+	$(ADAPTIVE_AWARE_SELECTION_LAB)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -712,6 +722,7 @@ test-integration: \
 	python3 tests/integration/test_recovery_orchestrator.py
 	python3 tests/integration/test_self_healing_faults.py
 	python3 tests/integration/test_latency_aware_selection.py
+	python3 tests/integration/test_adaptive_aware_selection.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -1617,3 +1628,30 @@ phase50-gate: $(LATENCY_AWARE_POOL_TEST) $(LATENCY_AWARE_SELECTION_LAB)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 50 gate passed: bounded fresh EWMA latency signals refine selection within the best safe locality tier, stale data loses authority, near-equal candidates preserve fairness, regressions, and sanitizers completed."
+
+
+$(ADAPTIVE_AWARE_POOL_TEST): tests/unit/test_adaptive_aware_pool.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c include/adaptive_aware_pool.h include/adaptive_score.h include/latency_signal.h include/edge_locality.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude tests/unit/test_adaptive_aware_pool.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(ADAPTIVE_AWARE_POOL_TEST)
+
+$(ADAPTIVE_AWARE_SELECTION_LAB): src/adaptive_aware_selection_lab.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c include/adaptive_aware_pool.h include/adaptive_score.h include/latency_signal.h include/edge_locality.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude src/adaptive_aware_selection_lab.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(ADAPTIVE_AWARE_SELECTION_LAB)
+
+test-adaptive-aware-selection: $(ADAPTIVE_AWARE_POOL_TEST) $(ADAPTIVE_AWARE_SELECTION_LAB)
+	./$(ADAPTIVE_AWARE_POOL_TEST)
+	python3 tests/integration/test_adaptive_aware_selection.py
+
+sanitize-adaptive-aware-selection:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude tests/unit/test_adaptive_aware_pool.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(SANITIZED_ADAPTIVE_AWARE_POOL_TEST)
+	./$(SANITIZED_ADAPTIVE_AWARE_POOL_TEST)
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude src/adaptive_aware_selection_lab.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(SANITIZED_ADAPTIVE_AWARE_SELECTION_LAB)
+	ADAPTIVE_AWARE_SELECTION_LAB_BIN=$(SANITIZED_ADAPTIVE_AWARE_SELECTION_LAB) python3 tests/integration/test_adaptive_aware_selection.py
+
+phase51-gate: $(ADAPTIVE_AWARE_POOL_TEST) $(ADAPTIVE_AWARE_SELECTION_LAB)
+	$(MAKE) test-adaptive-aware-selection
+	$(MAKE) sanitize-adaptive-aware-selection
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 51 gate passed: normalized latency/load scoring adapts within the best safe locality tier, stale latency loses influence, near-equal scores preserve fairness, regressions, and sanitizers completed."

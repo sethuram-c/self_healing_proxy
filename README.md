@@ -1105,29 +1105,33 @@ make sanitize-edge-aware-selection
 make phase49-gate
 ```
 
+
 ## Phase 50 - Latency-Aware Routing Signals
 
-Phase 50 adds bounded per-backend latency measurements without weakening Phase 49 locality or Stage 5 safety. Each backend maintains an integer EWMA with caller-supplied monotonic sample timestamps and a freshness deadline. Selection first finds the best safe locality tier, then considers only fresh latency signals inside that tier. Candidates within `latency_slack_ns` of the fastest fresh EWMA remain eligible and share traffic through the existing round-robin cursor. If no fresh measurements exist, the selector falls back to ordinary round-robin within the best safe locality tier.
+Phase 50 adds fixed-memory EWMA latency signals with explicit freshness. Safety and locality are resolved first; latency only refines peers inside the best usable locality tier. A configurable latency slack keeps near-equal peers in a fair round-robin cohort, stale data loses authority, and missing measurements fall back to ordinary locality-aware selection.
 
-Safety invariants:
-- locality remains stronger than latency: a remote 1 ms backend does not outrank a usable SITE-local backend;
-- stale measurements lose authority automatically;
-- latency samples are fixed-size state with no heap allocation;
-- EWMA uses bounded integer arithmetic and no floating-point dependency;
-- tiny timing differences do not force single-backend pinning because a configurable slack defines a near-equal cohort;
-- missing measurements do not fail routing; they trigger deterministic round-robin fallback when no fresh samples exist;
-- health, circuit, and capacity checks still gate every candidate before latency is considered.
+## Phase 51 - Adaptive Load/Latency Scoring
+
+Phase 51 combines two bounded routing signals after safety and locality have already been resolved: fresh latency and current connection utilization. Latency is normalized relative to the fastest fresh peer (`1000` for the fastest, bounded upward for slower peers); load is normalized as utilization in permille (`0..1000`). Configurable integer weights produce a dimensionless score where lower is preferred.
+
+Stale or missing latency is never converted into a fake latency number: in that case the latency term is omitted and the remaining available signal is normalized on its own. A `score_slack` forms a near-equal cohort so tiny score differences do not pin traffic to one backend. Round-robin cursor fairness is preserved inside the cohort. Locality remains stronger than score, and health/circuit/capacity remain hard safety gates.
 
 Useful commands:
 
 ```bash
-make test-latency-aware-selection
-./build/latency_aware_selection_lab --scenario faster
-./build/latency_aware_selection_lab --scenario stale
-./build/latency_aware_selection_lab --scenario locality
-./build/latency_aware_selection_lab --scenario no-samples
-make sanitize-latency-aware-selection
-make phase50-gate
+make test-adaptive-aware-selection
+./build/adaptive_aware_selection_lab --scenario load-shift
+./build/adaptive_aware_selection_lab --scenario tradeoff
+./build/adaptive_aware_selection_lab --scenario fairness
+./build/adaptive_aware_selection_lab --scenario locality
+make sanitize-adaptive-aware-selection
+make phase51-gate
 ```
 
-Phase boundary: Phase 50 provides smoothed, freshness-bounded latency signals and uses them only as a preference inside an already-safe locality tier. It does not yet build weighted routing, active exploration, percentile estimators, load-aware scoring, or adaptive traffic weights.
+The Phase 51 completion marker is:
+
+```text
+Phase 51 gate passed: normalized latency/load scoring adapts within the best safe locality tier, stale latency loses influence, near-equal scores preserve fairness, regressions, and sanitizers completed.
+```
+
+Phase boundary: Phase 51 does not yet add long-window load EWMA, error-rate scoring, p95/p99 latency, active exploration, or production performance stress tuning.

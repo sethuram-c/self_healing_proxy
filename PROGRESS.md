@@ -2331,8 +2331,8 @@ Each event contains `schema`, `timestamp_ns`, monotonic `sequence`, `backend`, `
 ### Fault-injection contract
 The recovery scenario injects three backend failures, requires `UNHEALTHY + OPEN`, approves bounded remediation, admits it through the fleet coordinator, quarantines a synthetic successful replacement, feeds two successful readiness observations through the existing hysteresis, and proves final `HEALTHY + CLOSED + READY + ROUTE_ENABLED`. The storm scenario proves both `CONCURRENCY_LIMIT` and `WINDOW_BUDGET` suppression are emitted and machine-parseable.
 
-### Local quality gate pending
-Run `make phase48-gate` on Fedora. Completion requires both exact markers:
+### Quality gate
+PASS ON FEDORA (`make phase48-gate`). Historical completion markers:
 
 `Phase 48 gate passed: self-healing emits structured end-to-end events, fault injection proves containment/remediation/recovery and restart-storm suppression, regressions, and sanitizers completed.`
 
@@ -2367,24 +2367,50 @@ Phase 50 - measured latency-aware routing signals.
 
 ## Phase 50 - Latency-Aware Routing Signals
 
+**Status:** COMPLETE
+
+### Goal
+Add bounded fresh EWMA latency evidence that refines selection inside the best safe locality tier without allowing stale measurements or tiny timing differences to override safety, topology, or fairness.
+
+### Implemented
+- `include/latency_signal.h` / `src/latency_signal.c`: fixed-memory EWMA signal with monotonic timestamps and freshness expiry.
+- `include/latency_aware_pool.h` / `src/latency_aware_pool.c`: latency cohort selection layered after safety and locality.
+- `src/latency_aware_selection_lab.c`: fast cohort, stale signal, locality precedence, and no-sample fallback scenarios.
+- Unit/integration tests plus ASan/UBSan and full regression gate.
+
+### Quality gate
+PASS ON FEDORA (`make phase50-gate`).
+
+### Next Phase
+Phase 51 - adaptive load/latency scoring.
+
+
+## Phase 51 - Adaptive Load/Latency Scoring
+
 **Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
 
 ### Goal
-Add bounded, freshness-aware latency measurements and use them to refine backend choice only within the best safe locality tier established by Phase 49.
+Combine fresh latency evidence with instantaneous backend connection utilization in normalized units so routing can adapt to both speed and current pressure while preserving safety, locality, and round-robin fairness among near-equal candidates.
+
+### Scoring contract
+- Safety (health, circuit, capacity) remains a hard filter.
+- The nearest usable locality tier is chosen before scoring.
+- Fresh latency is normalized relative to the fastest fresh peer: fastest = 1000, slower peers scale upward with a bounded cap.
+- Load is normalized as connection utilization in permille: `active_connections / max_connections * 1000`.
+- Integer latency/load weights combine the available components; stale/missing latency is not fabricated and therefore contributes no latency term.
+- `score_slack` creates a near-equal score cohort; the existing rotating cursor preserves fairness inside that cohort.
+- Candidate comparison is side-effect-free; HALF_OPEN circuit permission is consumed only by the final selected backend.
 
 ### Implemented
-- `include/latency_signal.h` / `src/latency_signal.c`: fixed-memory integer EWMA, monotonic sample validation, and freshness expiry.
-- `include/latency_aware_pool.h` / `src/latency_aware_pool.c`: latency-refined selector layered on health, circuit, capacity, and locality constraints.
-- `src/latency_aware_selection_lab.c`: low-latency cohort, stale-sample, locality-precedence, and no-sample fallback scenarios.
-- `tests/unit/test_latency_aware_pool.c`: EWMA arithmetic, exact freshness boundary, invalid config, stale authority, locality precedence, fairness/slack, and no-sample fallback.
-- `tests/integration/test_latency_aware_selection.py`: CLI-level behavior assertions.
-- `Makefile`: targeted normal/sanitized tests plus Phase 50 full regression gate.
-
-### Routing contract
-Selection first finds the nearest locality tier containing a backend that is health-eligible, circuit-permitted, and below its connection limit. Fresh EWMA values are then compared only inside that tier. All candidates whose EWMA is within `latency_slack_ns` of the fastest fresh signal form the eligible latency cohort and preserve round-robin fairness. Stale signals are ignored. If the tier has no fresh signals, selection falls back to the existing round-robin order rather than failing.
+- `include/adaptive_score.h` / `src/adaptive_score.c`: normalized bounded integer score primitives.
+- `include/adaptive_aware_pool.h` / `src/adaptive_aware_pool.c`: adaptive selector layered on safety/locality/circuit state.
+- `src/adaptive_aware_selection_lab.c`: load shift, latency/load tradeoff, fairness, and locality precedence scenarios.
+- `tests/unit/test_adaptive_aware_pool.c`: score arithmetic, validation, stale behavior, dynamic load, fairness, and locality assertions.
+- `tests/integration/test_adaptive_aware_selection.py`: CLI-level policy checks.
+- `Makefile`: Phase 51 normal, sanitizer, regression, and gate integration.
 
 ### Quality gate
-Run `make phase50-gate` on Fedora.
+Run `make phase51-gate` on Fedora.
 
 ### Next Phase
-Phase 51 - adaptive load/latency scoring and bounded weighted routing.
+Phase 52 - adaptive scoring stability and overload/failover stress.
