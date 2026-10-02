@@ -87,6 +87,10 @@ ADAPTIVE_AWARE_SELECTION_LAB := build/adaptive_aware_selection_lab
 ADAPTIVE_AWARE_POOL_TEST := build/test_adaptive_aware_pool
 SANITIZED_ADAPTIVE_AWARE_SELECTION_LAB := build/adaptive_aware_selection_lab-sanitized
 SANITIZED_ADAPTIVE_AWARE_POOL_TEST := build/test_adaptive_aware_pool-sanitized
+ADAPTIVE_STABILITY_LAB := build/adaptive_stability_lab
+ROUTING_STABILITY_TEST := build/test_routing_stability
+SANITIZED_ADAPTIVE_STABILITY_LAB := build/adaptive_stability_lab-sanitized
+SANITIZED_ROUTING_STABILITY_TEST := build/test_routing_stability-sanitized
 SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
@@ -209,6 +213,9 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	test-adaptive-aware-selection \
 	sanitize-adaptive-aware-selection \
 	phase51-gate \
+	test-adaptive-stability \
+	sanitize-adaptive-stability \
+	phase52-gate \
 	phase48-gate \
 	stage5-gate \
 	tcp-listener \
@@ -635,7 +642,8 @@ test-unit: \
 	$(HEALING_COORDINATOR_TEST) \
 	$(HEALING_EVENT_TEST) \
 	$(LATENCY_AWARE_POOL_TEST) \
-	$(ADAPTIVE_AWARE_POOL_TEST)
+	$(ADAPTIVE_AWARE_POOL_TEST) \
+	$(ROUTING_STABILITY_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -665,6 +673,7 @@ test-unit: \
 	./$(HEALING_EVENT_TEST)
 	./$(LATENCY_AWARE_POOL_TEST)
 	./$(ADAPTIVE_AWARE_POOL_TEST)
+	./$(ROUTING_STABILITY_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
@@ -723,6 +732,7 @@ test-integration: \
 	python3 tests/integration/test_self_healing_faults.py
 	python3 tests/integration/test_latency_aware_selection.py
 	python3 tests/integration/test_adaptive_aware_selection.py
+	python3 tests/integration/test_adaptive_stability.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -1655,3 +1665,30 @@ phase51-gate: $(ADAPTIVE_AWARE_POOL_TEST) $(ADAPTIVE_AWARE_SELECTION_LAB)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 51 gate passed: normalized latency/load scoring adapts within the best safe locality tier, stale latency loses influence, near-equal scores preserve fairness, regressions, and sanitizers completed."
+
+
+$(ROUTING_STABILITY_TEST): tests/unit/test_routing_stability.c src/routing_stability.c include/routing_stability.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude tests/unit/test_routing_stability.c src/routing_stability.c -o $(ROUTING_STABILITY_TEST)
+
+$(ADAPTIVE_STABILITY_LAB): src/adaptive_stability_lab.c src/routing_stability.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c include/routing_stability.h include/adaptive_aware_pool.h include/adaptive_score.h include/latency_signal.h include/edge_locality.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude src/adaptive_stability_lab.c src/routing_stability.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(ADAPTIVE_STABILITY_LAB)
+
+test-adaptive-stability: $(ROUTING_STABILITY_TEST) $(ADAPTIVE_STABILITY_LAB)
+	./$(ROUTING_STABILITY_TEST)
+	python3 tests/integration/test_adaptive_stability.py
+
+sanitize-adaptive-stability:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude tests/unit/test_routing_stability.c src/routing_stability.c -o $(SANITIZED_ROUTING_STABILITY_TEST)
+	./$(SANITIZED_ROUTING_STABILITY_TEST)
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude src/adaptive_stability_lab.c src/routing_stability.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(SANITIZED_ADAPTIVE_STABILITY_LAB)
+	ADAPTIVE_STABILITY_LAB_BIN=$(SANITIZED_ADAPTIVE_STABILITY_LAB) python3 tests/integration/test_adaptive_stability.py
+
+phase52-gate: $(ROUTING_STABILITY_TEST) $(ADAPTIVE_STABILITY_LAB)
+	$(MAKE) test-adaptive-stability
+	$(MAKE) sanitize-adaptive-stability
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 52 gate passed: adaptive routing remains bounded under oscillating latency/load, shifts away from overload, expires stale evidence, fails over cleanly, regressions, and sanitizers completed."

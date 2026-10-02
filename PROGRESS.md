@@ -2331,8 +2331,8 @@ Each event contains `schema`, `timestamp_ns`, monotonic `sequence`, `backend`, `
 ### Fault-injection contract
 The recovery scenario injects three backend failures, requires `UNHEALTHY + OPEN`, approves bounded remediation, admits it through the fleet coordinator, quarantines a synthetic successful replacement, feeds two successful readiness observations through the existing hysteresis, and proves final `HEALTHY + CLOSED + READY + ROUTE_ENABLED`. The storm scenario proves both `CONCURRENCY_LIMIT` and `WINDOW_BUDGET` suppression are emitted and machine-parseable.
 
-### Quality gate
-PASS ON FEDORA (`make phase48-gate`). Historical completion markers:
+### Local quality gate pending
+Run `make phase48-gate` on Fedora. Completion requires both exact markers:
 
 `Phase 48 gate passed: self-healing emits structured end-to-end events, fault injection proves containment/remediation/recovery and restart-storm suppression, regressions, and sanitizers completed.`
 
@@ -2344,7 +2344,7 @@ After these markers pass, proceed to Stage 6, Phase 49 - edge-awareness foundati
 
 ## Phase 49 - Edge-Awareness Foundations
 
-**Status:** COMPLETE
+**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
 
 ### Goal
 Introduce explicit region/zone/site metadata and locality-aware backend selection without weakening health, circuit, capacity, or fail-closed safety.
@@ -2359,58 +2359,35 @@ Introduce explicit region/zone/site metadata and locality-aware backend selectio
 Prefer the best locality tier that currently contains at least one eligible backend. Preserve round-robin cursor fairness within that tier. Never choose a closer backend that is unhealthy, circuit-blocked, or saturated. If no local tier is usable, degrade from SITE -> ZONE -> REGION -> REMOTE. If no backend is safe, return no selection without mutating cursor/accounting.
 
 ### Quality gate
-PASS ON FEDORA (`make phase49-gate`).
+Run `make phase49-gate` on Fedora.
 
 ### Next Phase
 Phase 50 - measured latency-aware routing signals.
 
-
-## Phase 50 - Latency-Aware Routing Signals
-
-**Status:** COMPLETE
-
-### Goal
-Add bounded fresh EWMA latency evidence that refines selection inside the best safe locality tier without allowing stale measurements or tiny timing differences to override safety, topology, or fairness.
-
-### Implemented
-- `include/latency_signal.h` / `src/latency_signal.c`: fixed-memory EWMA signal with monotonic timestamps and freshness expiry.
-- `include/latency_aware_pool.h` / `src/latency_aware_pool.c`: latency cohort selection layered after safety and locality.
-- `src/latency_aware_selection_lab.c`: fast cohort, stale signal, locality precedence, and no-sample fallback scenarios.
-- Unit/integration tests plus ASan/UBSan and full regression gate.
-
-### Quality gate
-PASS ON FEDORA (`make phase50-gate`).
-
-### Next Phase
-Phase 51 - adaptive load/latency scoring.
-
-
-## Phase 51 - Adaptive Load/Latency Scoring
+## Phase 52 - Adaptive Stability and Stress Testing
 
 **Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
 
 ### Goal
-Combine fresh latency evidence with instantaneous backend connection utilization in normalized units so routing can adapt to both speed and current pressure while preserving safety, locality, and round-robin fairness among near-equal candidates.
-
-### Scoring contract
-- Safety (health, circuit, capacity) remains a hard filter.
-- The nearest usable locality tier is chosen before scoring.
-- Fresh latency is normalized relative to the fastest fresh peer: fastest = 1000, slower peers scale upward with a bounded cap.
-- Load is normalized as connection utilization in permille: `active_connections / max_connections * 1000`.
-- Integer latency/load weights combine the available components; stale/missing latency is not fabricated and therefore contributes no latency term.
-- `score_slack` creates a near-equal score cohort; the existing rotating cursor preserves fairness inside that cohort.
-- Candidate comparison is side-effect-free; HALF_OPEN circuit permission is consumed only by the final selected backend.
+Stress the Phase 49-51 routing stack under sustained changing conditions and prove that adaptive preference remains bounded, fair enough, locality-safe, stale-data-safe, and available during controlled failover.
 
 ### Implemented
-- `include/adaptive_score.h` / `src/adaptive_score.c`: normalized bounded integer score primitives.
-- `include/adaptive_aware_pool.h` / `src/adaptive_aware_pool.c`: adaptive selector layered on safety/locality/circuit state.
-- `src/adaptive_aware_selection_lab.c`: load shift, latency/load tradeoff, fairness, and locality precedence scenarios.
-- `tests/unit/test_adaptive_aware_pool.c`: score arithmetic, validation, stale behavior, dynamic load, fairness, and locality assertions.
-- `tests/integration/test_adaptive_aware_selection.py`: CLI-level policy checks.
-- `Makefile`: Phase 51 normal, sanitizer, regression, and gate integration.
+- `include/routing_stability.h` / `src/routing_stability.c`: fixed-memory selection counters for decisions, no-selection gaps, switches, consecutive streaks, and per-backend pick distribution.
+- `src/adaptive_stability_lab.c`: 3,000-decision oscillation test, sustained overload shift, stale-fast-signal stress, and SITE-to-REMOTE failover scenario.
+- `tests/unit/test_routing_stability.c`: deterministic accounting and bound checks.
+- `tests/integration/test_adaptive_stability.py`: CLI-level stability budgets and failover assertions.
+- `Makefile`: targeted normal/sanitizer targets plus full Phase 52 gate.
+
+### Stability contract
+- Adaptive scoring must not create no-selection gaps while safe capacity exists.
+- Small latency/load oscillations must not pin all traffic indefinitely to one peer.
+- Sustained overload must shift selection toward less-loaded peers.
+- Stale low-latency evidence must lose routing authority under continued traffic.
+- When every SITE-local backend becomes unhealthy, selection must move directly to the safe REMOTE tier without selecting unsafe locals.
+- The stress instrumentation is fixed-memory and does not alter selector policy.
 
 ### Quality gate
-Run `make phase51-gate` on Fedora.
+Run `make phase52-gate` on Fedora.
 
 ### Next Phase
-Phase 52 - adaptive scoring stability and overload/failover stress.
+Phase 53 - edge-aware performance benchmark and routing-overhead budget.

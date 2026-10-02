@@ -33,13 +33,16 @@ static int usable_candidate(adaptive_aware_pool_t *selector, size_t index,
 }
 
 static int score_candidate(adaptive_aware_pool_t *selector, size_t index,
-    uint64_t now_ns, uint64_t fastest_fresh_latency,
+    uint64_t now_ns, uint64_t fastest_fresh_latency, int require_fresh_latency,
     adaptive_score_result_t *result)
 {
     uint64_t latency = 0;
     int latency_status = latency_signal_get(&selector->latencies[index], now_ns, &latency);
     if (latency_status < 0) {
         return -1;
+    }
+    if (require_fresh_latency && latency_status == 0) {
+        return 1;
     }
     backend_target_t *target = &selector->pool->targets[index];
     return adaptive_score_compute(latency, latency_status > 0,
@@ -130,8 +133,12 @@ const backend_target_t *adaptive_aware_pool_acquire_next(adaptive_aware_pool_t *
         }
         adaptive_score_result_t score;
         uint64_t fastest = have_fresh_latency ? fastest_fresh_latency : 0;
-        if (score_candidate(selector, i, now_ns, fastest, &score) != 0) {
+        int score_status = score_candidate(selector, i, now_ns, fastest, have_fresh_latency, &score);
+        if (score_status < 0) {
             return NULL;
+        }
+        if (score_status > 0) {
+            continue;
         }
         if (!found_score || score.combined_score < best_score) {
             best_score = score.combined_score;
@@ -153,8 +160,12 @@ const backend_target_t *adaptive_aware_pool_acquire_next(adaptive_aware_pool_t *
 
         adaptive_score_result_t score;
         uint64_t fastest = have_fresh_latency ? fastest_fresh_latency : 0;
-        if (score_candidate(selector, index, now_ns, fastest, &score) != 0) {
+        int score_status = score_candidate(selector, index, now_ns, fastest, have_fresh_latency, &score);
+        if (score_status < 0) {
             return NULL;
+        }
+        if (score_status > 0) {
+            continue;
         }
         if (score.combined_score > threshold) {
             continue;

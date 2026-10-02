@@ -1105,33 +1105,10 @@ make sanitize-edge-aware-selection
 make phase49-gate
 ```
 
+## Phase 52 - Adaptive Stability and Stress Testing
 
-## Phase 50 - Latency-Aware Routing Signals
+Phase 52 stress-tests the adaptive routing policy added in Phases 49-51 instead of adding another routing signal. The new `routing_stability` helper records bounded selection metrics, while `adaptive_stability_lab` drives thousands of deterministic routing decisions under oscillating latency, changing connection pressure, stale measurements, and locality failure. The phase verifies that adaptive scoring does not cause starvation, no-selection gaps, unsafe locality leakage, or permanent trust in stale latency. Use `make test-adaptive-stability`, `make sanitize-adaptive-stability`, and finally `make phase52-gate`.
 
-Phase 50 adds fixed-memory EWMA latency signals with explicit freshness. Safety and locality are resolved first; latency only refines peers inside the best usable locality tier. A configurable latency slack keeps near-equal peers in a fair round-robin cohort, stale data loses authority, and missing measurements fall back to ordinary locality-aware selection.
 
-## Phase 51 - Adaptive Load/Latency Scoring
-
-Phase 51 combines two bounded routing signals after safety and locality have already been resolved: fresh latency and current connection utilization. Latency is normalized relative to the fastest fresh peer (`1000` for the fastest, bounded upward for slower peers); load is normalized as utilization in permille (`0..1000`). Configurable integer weights produce a dimensionless score where lower is preferred.
-
-Stale or missing latency is never converted into a fake latency number: in that case the latency term is omitted and the remaining available signal is normalized on its own. A `score_slack` forms a near-equal cohort so tiny score differences do not pin traffic to one backend. Round-robin cursor fairness is preserved inside the cohort. Locality remains stronger than score, and health/circuit/capacity remain hard safety gates.
-
-Useful commands:
-
-```bash
-make test-adaptive-aware-selection
-./build/adaptive_aware_selection_lab --scenario load-shift
-./build/adaptive_aware_selection_lab --scenario tradeoff
-./build/adaptive_aware_selection_lab --scenario fairness
-./build/adaptive_aware_selection_lab --scenario locality
-make sanitize-adaptive-aware-selection
-make phase51-gate
-```
-
-The Phase 51 completion marker is:
-
-```text
-Phase 51 gate passed: normalized latency/load scoring adapts within the best safe locality tier, stale latency loses influence, near-equal scores preserve fairness, regressions, and sanitizers completed.
-```
-
-Phase boundary: Phase 51 does not yet add long-window load EWMA, error-rate scoring, p95/p99 latency, active exploration, or production performance stress tuning.
+### Phase 52 mixed-freshness correction
+The stress suite found and corrects an important Phase 51 edge case: if at least one peer in the selected locality tier has fresh latency evidence, peers with stale/missing latency are no longer allowed to gain a lower score simply because their latency term disappeared. In mixed-freshness cohorts, only fresh-latency peers participate in adaptive latency/load ranking. If no peer has fresh latency, the selector still falls back to load-only adaptive selection.
