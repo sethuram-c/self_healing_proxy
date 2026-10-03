@@ -2344,7 +2344,7 @@ After these markers pass, proceed to Stage 6, Phase 49 - edge-awareness foundati
 
 ## Phase 49 - Edge-Awareness Foundations
 
-**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+**Status:** COMPLETE
 
 ### Goal
 Introduce explicit region/zone/site metadata and locality-aware backend selection without weakening health, circuit, capacity, or fail-closed safety.
@@ -2359,14 +2359,34 @@ Introduce explicit region/zone/site metadata and locality-aware backend selectio
 Prefer the best locality tier that currently contains at least one eligible backend. Preserve round-robin cursor fairness within that tier. Never choose a closer backend that is unhealthy, circuit-blocked, or saturated. If no local tier is usable, degrade from SITE -> ZONE -> REGION -> REMOTE. If no backend is safe, return no selection without mutating cursor/accounting.
 
 ### Quality gate
-Run `make phase49-gate` on Fedora.
+PASS ON FEDORA (`make phase49-gate`).
 
 ### Next Phase
 Phase 50 - measured latency-aware routing signals.
 
+## Phase 50 - Latency-Aware Routing Signals
+
+**Status:** COMPLETE
+
+### Goal
+Add bounded fresh EWMA latency as a routing preference inside the best safe locality tier without allowing stale data or tiny latency differences to defeat fairness.
+
+### Quality gate
+PASS ON FEDORA (`make phase50-gate`).
+
+## Phase 51 - Adaptive Load/Latency Scoring
+
+**Status:** COMPLETE
+
+### Goal
+Combine normalized fresh latency and live connection utilization into a bounded adaptive score while preserving safety, locality, and a near-equal fairness cohort.
+
+### Quality gate
+PASS ON FEDORA (`make phase51-gate`).
+
 ## Phase 52 - Adaptive Stability and Stress Testing
 
-**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+**Status:** COMPLETE
 
 ### Goal
 Stress the Phase 49-51 routing stack under sustained changing conditions and prove that adaptive preference remains bounded, fair enough, locality-safe, stale-data-safe, and available during controlled failover.
@@ -2387,7 +2407,38 @@ Stress the Phase 49-51 routing stack under sustained changing conditions and pro
 - The stress instrumentation is fixed-memory and does not alter selector policy.
 
 ### Quality gate
-Run `make phase52-gate` on Fedora.
+PASS ON FEDORA (`make phase52-gate`).
 
 ### Next Phase
 Phase 53 - edge-aware performance benchmark and routing-overhead budget.
+
+
+## Phase 53 - Edge Routing Performance Budget
+
+**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+
+### Goal
+Measure the optimized cost of the Phase 49-52 edge-routing decision path, compare adaptive scoring against the Phase 49 locality-aware safety baseline, verify bounded scaling through 32 backends, and turn those measurements into a repeatable regression budget.
+
+### Implemented
+- `include/routing_perf.h` / `src/routing_perf.c`: fixed-size timing sample collection, median selection, ns/op normalization, and relative-ratio helpers.
+- `src/edge_routing_perf_lab.c`: optimized warm-up + median microbenchmark comparing locality-aware baseline vs adaptive routing, plus 4/16/32-backend scaling and sanitizer smoke mode.
+- `tests/unit/test_routing_perf.c`: deterministic median, ns/op, ratio, and invalid-input tests.
+- `tests/integration/test_edge_routing_perf.py`: enforces relative, absolute, and scaling budgets from machine-readable benchmark output.
+- `Makefile`: optimized Phase 53 performance binary, targeted benchmark tests, sanitizer smoke target, and full gate.
+
+### Performance contract
+- Build timing-sensitive benchmark code with `-O2 -DNDEBUG`; do not benchmark the project-wide `-O0` debug build.
+- Warm the selector before measurement and use the median of multiple complete batches rather than one timing sample.
+- Compare against Phase 49's locality-aware safety selector, not a trivial array increment, so the ratio measures the incremental cost of latency/load scoring.
+- Eight-backend adaptive selection must remain within 10x of the locality-aware baseline and below the generous 20 us/selection absolute ceiling.
+- Scaling from 4 to 32 backends must remain within 14x and the 32-backend median must remain below 60 us/selection.
+- Sanitizer validation uses a functional smoke run rather than enforcing timing budgets under instrumentation.
+
+### Quality gate
+Run `make phase53-gate` on Fedora. Completion requires the exact marker:
+
+`Phase 53 gate passed: optimized median microbenchmarks bound adaptive edge-routing overhead versus locality-aware baseline, 32-backend scaling stays within budget, regressions, and sanitizers completed.`
+
+### Next Phase
+Phase 54 - routing decision observability and performance telemetry.

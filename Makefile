@@ -3,6 +3,7 @@ CC := gcc
 CFLAGS := -std=c11 -Wall -Wextra -Wpedantic -Werror -g -O0
 SANFLAGS := -fsanitize=address,undefined -fno-omit-frame-pointer
 BENCH_CFLAGS := -std=c11 -Wall -Wextra -Wpedantic -Werror -O2 -DNDEBUG
+PERF_CFLAGS := -std=c11 -Wall -Wextra -Wpedantic -Werror -O2 -DNDEBUG
 
 TARGET := build/microproxy
 SOURCE := src/main.c
@@ -91,6 +92,10 @@ ADAPTIVE_STABILITY_LAB := build/adaptive_stability_lab
 ROUTING_STABILITY_TEST := build/test_routing_stability
 SANITIZED_ADAPTIVE_STABILITY_LAB := build/adaptive_stability_lab-sanitized
 SANITIZED_ROUTING_STABILITY_TEST := build/test_routing_stability-sanitized
+EDGE_ROUTING_PERF_LAB := build/edge_routing_perf_lab
+ROUTING_PERF_TEST := build/test_routing_perf
+SANITIZED_EDGE_ROUTING_PERF_LAB := build/edge_routing_perf_lab-sanitized
+SANITIZED_ROUTING_PERF_TEST := build/test_routing_perf-sanitized
 SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
@@ -216,6 +221,9 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	test-adaptive-stability \
 	sanitize-adaptive-stability \
 	phase52-gate \
+	test-edge-routing-perf \
+	sanitize-edge-routing-perf \
+	phase53-gate \
 	phase48-gate \
 	stage5-gate \
 	tcp-listener \
@@ -643,7 +651,8 @@ test-unit: \
 	$(HEALING_EVENT_TEST) \
 	$(LATENCY_AWARE_POOL_TEST) \
 	$(ADAPTIVE_AWARE_POOL_TEST) \
-	$(ROUTING_STABILITY_TEST)
+	$(ROUTING_STABILITY_TEST) \
+	$(ROUTING_PERF_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -674,6 +683,7 @@ test-unit: \
 	./$(LATENCY_AWARE_POOL_TEST)
 	./$(ADAPTIVE_AWARE_POOL_TEST)
 	./$(ROUTING_STABILITY_TEST)
+	./$(ROUTING_PERF_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
@@ -1692,3 +1702,30 @@ phase52-gate: $(ROUTING_STABILITY_TEST) $(ADAPTIVE_STABILITY_LAB)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 52 gate passed: adaptive routing remains bounded under oscillating latency/load, shifts away from overload, expires stale evidence, fails over cleanly, regressions, and sanitizers completed."
+
+
+$(ROUTING_PERF_TEST): tests/unit/test_routing_perf.c src/routing_perf.c include/routing_perf.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude tests/unit/test_routing_perf.c src/routing_perf.c -o $(ROUTING_PERF_TEST)
+
+$(EDGE_ROUTING_PERF_LAB): src/edge_routing_perf_lab.c src/routing_perf.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_aware_pool.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c include/routing_perf.h include/adaptive_aware_pool.h include/adaptive_score.h include/latency_signal.h include/edge_aware_pool.h include/edge_locality.h
+	mkdir -p build
+	$(CC) $(PERF_CFLAGS) -Iinclude src/edge_routing_perf_lab.c src/routing_perf.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_aware_pool.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(EDGE_ROUTING_PERF_LAB)
+
+test-edge-routing-perf: $(ROUTING_PERF_TEST) $(EDGE_ROUTING_PERF_LAB)
+	./$(ROUTING_PERF_TEST)
+	python3 tests/integration/test_edge_routing_perf.py
+
+sanitize-edge-routing-perf:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude tests/unit/test_routing_perf.c src/routing_perf.c -o $(SANITIZED_ROUTING_PERF_TEST)
+	./$(SANITIZED_ROUTING_PERF_TEST)
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude src/edge_routing_perf_lab.c src/routing_perf.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_aware_pool.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(SANITIZED_EDGE_ROUTING_PERF_LAB)
+	./$(SANITIZED_EDGE_ROUTING_PERF_LAB) --scenario smoke
+
+phase53-gate: $(ROUTING_PERF_TEST) $(EDGE_ROUTING_PERF_LAB)
+	$(MAKE) test-edge-routing-perf
+	$(MAKE) sanitize-edge-routing-perf
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 53 gate passed: optimized median microbenchmarks bound adaptive edge-routing overhead versus locality-aware baseline, 32-backend scaling stays within budget, regressions, and sanitizers completed."

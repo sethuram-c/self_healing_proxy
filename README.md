@@ -1112,3 +1112,32 @@ Phase 52 stress-tests the adaptive routing policy added in Phases 49-51 instead 
 
 ### Phase 52 mixed-freshness correction
 The stress suite found and corrects an important Phase 51 edge case: if at least one peer in the selected locality tier has fresh latency evidence, peers with stale/missing latency are no longer allowed to gain a lower score simply because their latency term disappeared. In mixed-freshness cohorts, only fresh-latency peers participate in adaptive latency/load ranking. If no peer has fresh latency, the selector still falls back to load-only adaptive selection.
+
+
+## Phase 53 - Edge Routing Performance Budget
+
+Phase 53 converts the increasingly sophisticated Phase 49-52 selector into a measurable performance contract. The benchmark uses an optimized `-O2 -DNDEBUG` binary, warms each selector before timing, runs several full batches, and gates on the median rather than a single noisy sample.
+
+The comparison baseline is Phase 49's locality-aware selector, which already pays for health, circuit, capacity, and locality checks. This makes the reported ratio the incremental cost of fresh latency lookup, normalization, load scoring, cohort construction, and adaptive fairness rather than an artificial comparison with a trivial loop.
+
+The benchmark enforces both relative and absolute ceilings. At eight backends the adaptive selector must stay within 10x of the locality-aware baseline and below 20 microseconds per decision. A second scenario measures 4, 16, and 32 backends; 32-backend cost must stay within 14x of the four-backend result and below 60 microseconds per decision. These are regression budgets, not claimed production latency numbers.
+
+Sanitizer builds intentionally run only a functional benchmark smoke scenario. ASan/UBSan instrumentation changes timing too much for a meaningful performance budget, so correctness and timing are validated separately.
+
+Useful commands:
+
+```bash
+make test-edge-routing-perf
+./build/edge_routing_perf_lab --scenario compare
+./build/edge_routing_perf_lab --scenario scale
+make sanitize-edge-routing-perf
+make phase53-gate
+```
+
+The Phase 53 completion marker is:
+
+```text
+Phase 53 gate passed: optimized median microbenchmarks bound adaptive edge-routing overhead versus locality-aware baseline, 32-backend scaling stays within budget, regressions, and sanitizers completed.
+```
+
+Phase boundary: this phase measures and budgets selector cost. It does not yet export routing-decision performance telemetry, change production routing weights, or optimize the algorithm based on profiler evidence; those remain later Stage 6 work.
