@@ -96,6 +96,11 @@ EDGE_ROUTING_PERF_LAB := build/edge_routing_perf_lab
 ROUTING_PERF_TEST := build/test_routing_perf
 SANITIZED_EDGE_ROUTING_PERF_LAB := build/edge_routing_perf_lab-sanitized
 SANITIZED_ROUTING_PERF_TEST := build/test_routing_perf-sanitized
+ROUTING_DECISION_TEST := build/test_routing_decision
+ROUTING_OBSERVABILITY_LAB := build/routing_observability_lab
+ROUTING_OBSERVABILITY_PERF_LAB := build/routing_observability_lab-perf
+SANITIZED_ROUTING_DECISION_TEST := build/test_routing_decision-sanitized
+SANITIZED_ROUTING_OBSERVABILITY_LAB := build/routing_observability_lab-sanitized
 SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
@@ -224,6 +229,9 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	test-edge-routing-perf \
 	sanitize-edge-routing-perf \
 	phase53-gate \
+	test-routing-observability \
+	sanitize-routing-observability \
+	phase54-gate \
 	phase48-gate \
 	stage5-gate \
 	tcp-listener \
@@ -652,7 +660,8 @@ test-unit: \
 	$(LATENCY_AWARE_POOL_TEST) \
 	$(ADAPTIVE_AWARE_POOL_TEST) \
 	$(ROUTING_STABILITY_TEST) \
-	$(ROUTING_PERF_TEST)
+	$(ROUTING_PERF_TEST) \
+	$(ROUTING_DECISION_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -684,6 +693,7 @@ test-unit: \
 	./$(ADAPTIVE_AWARE_POOL_TEST)
 	./$(ROUTING_STABILITY_TEST)
 	./$(ROUTING_PERF_TEST)
+	./$(ROUTING_DECISION_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
@@ -704,7 +714,8 @@ test-integration: \
 	$(HEALING_COORDINATOR_LAB) \
 	$(SELF_HEALING_FAULT_LAB) \
 	$(LATENCY_AWARE_SELECTION_LAB) \
-	$(ADAPTIVE_AWARE_SELECTION_LAB)
+	$(ADAPTIVE_AWARE_SELECTION_LAB) \
+	$(ROUTING_OBSERVABILITY_LAB)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -743,6 +754,7 @@ test-integration: \
 	python3 tests/integration/test_latency_aware_selection.py
 	python3 tests/integration/test_adaptive_aware_selection.py
 	python3 tests/integration/test_adaptive_stability.py
+	SKIP_PERF=1 python3 tests/integration/test_routing_observability.py
 
 test-stress: $(EPOLL_SERVER)
 	python3 tests/stress/test_100_clients.py
@@ -1729,3 +1741,34 @@ phase53-gate: $(ROUTING_PERF_TEST) $(EDGE_ROUTING_PERF_LAB)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 53 gate passed: optimized median microbenchmarks bound adaptive edge-routing overhead versus locality-aware baseline, 32-backend scaling stays within budget, regressions, and sanitizers completed."
+
+$(ROUTING_DECISION_TEST): tests/unit/test_routing_decision.c src/routing_decision.c include/routing_decision.h include/adaptive_score.h include/edge_locality.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude tests/unit/test_routing_decision.c src/routing_decision.c src/edge_locality.c -o $(ROUTING_DECISION_TEST)
+
+$(ROUTING_OBSERVABILITY_LAB): src/routing_observability_lab.c src/routing_decision.c src/routing_perf.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c include/routing_decision.h include/adaptive_aware_pool.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude src/routing_observability_lab.c src/routing_decision.c src/routing_perf.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(ROUTING_OBSERVABILITY_LAB)
+
+$(ROUTING_OBSERVABILITY_PERF_LAB): src/routing_observability_lab.c src/routing_decision.c src/routing_perf.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c include/routing_decision.h include/adaptive_aware_pool.h
+	mkdir -p build
+	$(CC) $(PERF_CFLAGS) -Iinclude src/routing_observability_lab.c src/routing_decision.c src/routing_perf.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(ROUTING_OBSERVABILITY_PERF_LAB)
+
+test-routing-observability: $(ROUTING_DECISION_TEST) $(ROUTING_OBSERVABILITY_LAB) $(ROUTING_OBSERVABILITY_PERF_LAB)
+	./$(ROUTING_DECISION_TEST)
+	ROUTING_OBSERVABILITY_PERF_BIN=$(ROUTING_OBSERVABILITY_PERF_LAB) python3 tests/integration/test_routing_observability.py
+
+sanitize-routing-observability:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude tests/unit/test_routing_decision.c src/routing_decision.c src/edge_locality.c -o $(SANITIZED_ROUTING_DECISION_TEST)
+	./$(SANITIZED_ROUTING_DECISION_TEST)
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude src/routing_observability_lab.c src/routing_decision.c src/routing_perf.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(SANITIZED_ROUTING_OBSERVABILITY_LAB)
+	ROUTING_OBSERVABILITY_LAB_BIN=$(SANITIZED_ROUTING_OBSERVABILITY_LAB) ROUTING_OBSERVABILITY_PERF_BIN=$(ROUTING_OBSERVABILITY_PERF_LAB) SKIP_PERF=1 python3 tests/integration/test_routing_observability.py
+
+phase54-gate: $(ROUTING_DECISION_TEST) $(ROUTING_OBSERVABILITY_LAB) $(ROUTING_OBSERVABILITY_PERF_LAB)
+	$(MAKE) test-routing-observability
+	$(MAKE) sanitize-routing-observability
+	$(MAKE) test-edge-routing-perf
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 54 gate passed: bounded structured routing-decision telemetry explains locality fallback, latency freshness, normalized load/latency scores, fairness thresholds, and trace capture stays inside its hot-path overhead budget with regressions and sanitizers completed."

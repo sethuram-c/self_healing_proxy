@@ -77,10 +77,10 @@ int adaptive_aware_pool_init(adaptive_aware_pool_t *selector, backend_pool_t *po
     return 0;
 }
 
-const backend_target_t *adaptive_aware_pool_acquire_next(adaptive_aware_pool_t *selector,
+static const backend_target_t *adaptive_aware_pool_acquire_internal(adaptive_aware_pool_t *selector,
     const edge_locality_t *request_locality, uint64_t now_ns,
     size_t *selected_index, edge_locality_rank_t *selected_rank,
-    adaptive_score_result_t *selected_score)
+    adaptive_score_result_t *selected_score, adaptive_selection_trace_t *trace)
 {
     if (selector == NULL || selector->pool == NULL || request_locality == NULL
         || edge_locality_validate(request_locality) != 0
@@ -108,20 +108,26 @@ const backend_target_t *adaptive_aware_pool_acquire_next(adaptive_aware_pool_t *
         return NULL;
     }
 
+    size_t safe_locality_candidates = 0;
     uint64_t fastest_fresh_latency = 0;
+    size_t fresh_latency_candidates = 0;
     int have_fresh_latency = 0;
     for (size_t i = 0; i < pool->count; ++i) {
         if (!usable_candidate(selector, i, request_locality, now_ns, best_rank, 1)) {
             continue;
         }
+        safe_locality_candidates++;
         uint64_t latency = 0;
         int status = latency_signal_get(&selector->latencies[i], now_ns, &latency);
         if (status < 0) {
             return NULL;
         }
-        if (status > 0 && (!have_fresh_latency || latency < fastest_fresh_latency)) {
-            fastest_fresh_latency = latency;
-            have_fresh_latency = 1;
+        if (status > 0) {
+            fresh_latency_candidates++;
+            if (!have_fresh_latency || latency < fastest_fresh_latency) {
+                fastest_fresh_latency = latency;
+                have_fresh_latency = 1;
+            }
         }
     }
 
@@ -179,8 +185,37 @@ const backend_target_t *adaptive_aware_pool_acquire_next(adaptive_aware_pool_t *
         if (selected_index != NULL) *selected_index = index;
         if (selected_rank != NULL) *selected_rank = best_rank;
         if (selected_score != NULL) *selected_score = score;
+        if (trace != NULL) {
+            trace->selected_index = index;
+            trace->selected_rank = best_rank;
+            trace->fastest_fresh_latency_ns = have_fresh_latency ? fastest_fresh_latency : 0;
+            trace->fresh_latency_candidates = fresh_latency_candidates;
+            trace->safe_locality_candidates = safe_locality_candidates;
+            trace->best_score = best_score;
+            trace->score_threshold = threshold;
+            trace->selected_score = score;
+        }
         return &pool->targets[index];
     }
 
     return NULL;
+}
+
+
+const backend_target_t *adaptive_aware_pool_acquire_next(adaptive_aware_pool_t *selector,
+    const edge_locality_t *request_locality, uint64_t now_ns,
+    size_t *selected_index, edge_locality_rank_t *selected_rank,
+    adaptive_score_result_t *selected_score)
+{
+    return adaptive_aware_pool_acquire_internal(selector, request_locality, now_ns,
+        selected_index, selected_rank, selected_score, NULL);
+}
+
+const backend_target_t *adaptive_aware_pool_acquire_next_traced(adaptive_aware_pool_t *selector,
+    const edge_locality_t *request_locality, uint64_t now_ns,
+    adaptive_selection_trace_t *trace)
+{
+    if (trace == NULL) return NULL;
+    return adaptive_aware_pool_acquire_internal(selector, request_locality, now_ns,
+        NULL, NULL, NULL, trace);
 }

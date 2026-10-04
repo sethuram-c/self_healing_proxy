@@ -2364,26 +2364,6 @@ PASS ON FEDORA (`make phase49-gate`).
 ### Next Phase
 Phase 50 - measured latency-aware routing signals.
 
-## Phase 50 - Latency-Aware Routing Signals
-
-**Status:** COMPLETE
-
-### Goal
-Add bounded fresh EWMA latency as a routing preference inside the best safe locality tier without allowing stale data or tiny latency differences to defeat fairness.
-
-### Quality gate
-PASS ON FEDORA (`make phase50-gate`).
-
-## Phase 51 - Adaptive Load/Latency Scoring
-
-**Status:** COMPLETE
-
-### Goal
-Combine normalized fresh latency and live connection utilization into a bounded adaptive score while preserving safety, locality, and a near-equal fairness cohort.
-
-### Quality gate
-PASS ON FEDORA (`make phase51-gate`).
-
 ## Phase 52 - Adaptive Stability and Stress Testing
 
 **Status:** COMPLETE
@@ -2415,30 +2395,36 @@ Phase 53 - edge-aware performance benchmark and routing-overhead budget.
 
 ## Phase 53 - Edge Routing Performance Budget
 
+**Status:** COMPLETE
+
+### Goal
+Measure the optimized adaptive edge-routing hot path against the locality-aware safety baseline and enforce bounded relative, absolute, and 32-backend scaling budgets.
+
+### Quality gate
+PASS ON FEDORA (`make phase53-gate`).
+
+### Commit
+`689aef4 perf: budget adaptive edge routing cost`
+
+## Phase 54 - Routing Decision Observability
+
 **Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
 
 ### Goal
-Measure the optimized cost of the Phase 49-52 edge-routing decision path, compare adaptive scoring against the Phase 49 locality-aware safety baseline, verify bounded scaling through 32 backends, and turn those measurements into a repeatable regression budget.
+Explain each adaptive routing selection with bounded structured facts while preserving the existing untraced API and Phase 53 performance contract.
 
 ### Implemented
-- `include/routing_perf.h` / `src/routing_perf.c`: fixed-size timing sample collection, median selection, ns/op normalization, and relative-ratio helpers.
-- `src/edge_routing_perf_lab.c`: optimized warm-up + median microbenchmark comparing locality-aware baseline vs adaptive routing, plus 4/16/32-backend scaling and sanitizer smoke mode.
-- `tests/unit/test_routing_perf.c`: deterministic median, ns/op, ratio, and invalid-input tests.
-- `tests/integration/test_edge_routing_perf.py`: enforces relative, absolute, and scaling budgets from machine-readable benchmark output.
-- `Makefile`: optimized Phase 53 performance binary, targeted benchmark tests, sanitizer smoke target, and full gate.
-
-### Performance contract
-- Build timing-sensitive benchmark code with `-O2 -DNDEBUG`; do not benchmark the project-wide `-O0` debug build.
-- Warm the selector before measurement and use the median of multiple complete batches rather than one timing sample.
-- Compare against Phase 49's locality-aware safety selector, not a trivial array increment, so the ratio measures the incremental cost of latency/load scoring.
-- Eight-backend adaptive selection must remain within 10x of the locality-aware baseline and below the generous 20 us/selection absolute ceiling.
-- Scaling from 4 to 32 backends must remain within 14x and the 32-backend median must remain below 60 us/selection.
-- Sanitizer validation uses a functional smoke run rather than enforcing timing budgets under instrumentation.
+- `adaptive_selection_trace_t` and `adaptive_aware_pool_acquire_next_traced()` capture already-computed selection facts without a second pool scan.
+- `include/routing_decision.h` / `src/routing_decision.c` define bounded `shp.routing.v1` events and RFC8259-safe fixed-buffer JSON serialization.
+- Explicit locality fallback reasons explain SITE -> ZONE -> REGION -> REMOTE degradation.
+- Events expose fresh-latency participation, normalized latency/load components, best score, selected score, and fair-cohort threshold.
+- Optimized trace-capture microbenchmark enforces <=3x relative overhead and <=10 us/selection absolute budget; JSON serialization remains outside the routing hot path.
+- Unit, integration, sanitizer, Phase 53 performance regression, and global regression gates are wired into `phase54-gate`.
 
 ### Quality gate
-Run `make phase53-gate` on Fedora. Completion requires the exact marker:
+Run `make phase54-gate` on Fedora. Exact marker:
 
-`Phase 53 gate passed: optimized median microbenchmarks bound adaptive edge-routing overhead versus locality-aware baseline, 32-backend scaling stays within budget, regressions, and sanitizers completed.`
+`Phase 54 gate passed: bounded structured routing-decision telemetry explains locality fallback, latency freshness, normalized load/latency scores, fairness thresholds, and trace capture stays inside its hot-path overhead budget with regressions and sanitizers completed.`
 
 ### Next Phase
-Phase 54 - routing decision observability and performance telemetry.
+Phase 55 - edge-routing telemetry export and operational metrics.
