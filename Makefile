@@ -101,6 +101,10 @@ ROUTING_OBSERVABILITY_LAB := build/routing_observability_lab
 ROUTING_OBSERVABILITY_PERF_LAB := build/routing_observability_lab-perf
 SANITIZED_ROUTING_DECISION_TEST := build/test_routing_decision-sanitized
 SANITIZED_ROUTING_OBSERVABILITY_LAB := build/routing_observability_lab-sanitized
+ROUTING_TELEMETRY_TEST := build/test_routing_telemetry
+ROUTING_TELEMETRY_LAB := build/routing_telemetry_lab
+SANITIZED_ROUTING_TELEMETRY_TEST := build/test_routing_telemetry-sanitized
+SANITIZED_ROUTING_TELEMETRY_LAB := build/routing_telemetry_lab-sanitized
 SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
@@ -232,6 +236,9 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	test-routing-observability \
 	sanitize-routing-observability \
 	phase54-gate \
+	test-routing-telemetry \
+	sanitize-routing-telemetry \
+	phase55-gate \
 	phase48-gate \
 	stage5-gate \
 	tcp-listener \
@@ -1772,3 +1779,34 @@ phase54-gate: $(ROUTING_DECISION_TEST) $(ROUTING_OBSERVABILITY_LAB) $(ROUTING_OB
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 54 gate passed: bounded structured routing-decision telemetry explains locality fallback, latency freshness, normalized load/latency scores, fairness thresholds, and trace capture stays inside its hot-path overhead budget with regressions and sanitizers completed."
+
+
+$(ROUTING_TELEMETRY_TEST): tests/unit/test_routing_telemetry.c src/routing_telemetry.c src/routing_decision.c src/telemetry_channel.c src/ipc_frame.c src/edge_locality.c include/routing_telemetry.h include/routing_decision.h include/telemetry_channel.h include/ipc_frame.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude tests/unit/test_routing_telemetry.c src/routing_telemetry.c src/routing_decision.c src/telemetry_channel.c src/ipc_frame.c src/edge_locality.c -o $(ROUTING_TELEMETRY_TEST)
+
+$(ROUTING_TELEMETRY_LAB): src/routing_telemetry_lab.c src/routing_telemetry.c src/routing_decision.c src/telemetry_channel.c src/ipc_frame.c src/edge_locality.c include/routing_telemetry.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude src/routing_telemetry_lab.c src/routing_telemetry.c src/routing_decision.c src/telemetry_channel.c src/ipc_frame.c src/edge_locality.c -o $(ROUTING_TELEMETRY_LAB)
+
+test-routing-telemetry: $(ROUTING_TELEMETRY_TEST) $(ROUTING_TELEMETRY_LAB)
+	./$(ROUTING_TELEMETRY_TEST)
+	python3 tests/unit/test_otel_routing_metrics.py
+	python3 tests/integration/test_routing_telemetry.py
+
+sanitize-routing-telemetry:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude tests/unit/test_routing_telemetry.c src/routing_telemetry.c src/routing_decision.c src/telemetry_channel.c src/ipc_frame.c src/edge_locality.c -o $(SANITIZED_ROUTING_TELEMETRY_TEST)
+	./$(SANITIZED_ROUTING_TELEMETRY_TEST)
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude src/routing_telemetry_lab.c src/routing_telemetry.c src/routing_decision.c src/telemetry_channel.c src/ipc_frame.c src/edge_locality.c -o $(SANITIZED_ROUTING_TELEMETRY_LAB)
+	ROUTING_TELEMETRY_LAB_BIN=$(SANITIZED_ROUTING_TELEMETRY_LAB) python3 tests/integration/test_routing_telemetry.py
+	python3 tests/unit/test_otel_routing_metrics.py
+
+phase55-gate: $(ROUTING_TELEMETRY_TEST) $(ROUTING_TELEMETRY_LAB)
+	$(MAKE) test-routing-telemetry
+	$(MAKE) sanitize-routing-telemetry
+	$(MAKE) test-routing-observability
+	$(MAKE) test-otel-metrics
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 55 gate passed: shp.routing.v1 events use the bounded nonblocking telemetry path, OTLP log mapping preserves routing explanations, low-cardinality routing metrics expose locality/fallback/latency use, telemetry failure stays isolated, regressions, and sanitizers completed."

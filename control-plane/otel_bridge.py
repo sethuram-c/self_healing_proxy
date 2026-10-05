@@ -30,6 +30,9 @@ TYPE_EVENT = 1
 HEADER = struct.Struct("!4sBBHI")
 MAX_PAYLOAD = 65536
 SCHEMA = "shp.telemetry.v1"
+ROUTING_SCHEMA = "shp.routing.v1"
+ROUTING_LOCALITIES = ("SITE", "ZONE", "REGION", "REMOTE")
+ROUTING_FALLBACKS = ("NONE", "SITE_UNAVAILABLE", "SITE_ZONE_UNAVAILABLE", "LOCAL_UNAVAILABLE")
 DEFAULT_TIMEOUT_MS = 500
 DEFAULT_METRICS_EXPORT_EVERY = 0
 MAX_BACKEND_LABELS = 16
@@ -45,8 +48,6 @@ class Counters:
     invalid: int = 0
     metrics_exported: int = 0
     metrics_export_failed: int = 0
-    traces_exported: int = 0
-    traces_export_failed: int = 0
 
 
 class MetricsState:
@@ -100,6 +101,24 @@ class MetricsState:
     @property
     def tracked_backends(self) -> int:
         return len(self._backends)
+
+
+class RoutingMetricsState:
+    """Low-cardinality cumulative metrics derived from shp.routing.v1 events."""
+
+    def __init__(self, start_unix_ns: int | None = None):
+        self.start_unix_ns = time.time_ns() if start_unix_ns is None else start_unix_ns
+        self.decisions_total = 0
+        self.by_locality = {name: 0 for name in ROUTING_LOCALITIES}
+        self.by_fallback = {name: 0 for name in ROUTING_FALLBACKS}
+        self.latency_used = {True: 0, False: 0}
+
+    def observe(self, event: dict[str, Any]) -> None:
+        event = validate_routing_event(event)
+        self.decisions_total += 1
+        self.by_locality[event["locality_rank"]] += 1
+        self.by_fallback[event["fallback_reason"]] += 1
+        self.latency_used[event["used_latency"]] += 1
 
 
 def _signal_handler(_signum: int, _frame: object) -> None:
@@ -161,6 +180,57 @@ def validate_phase33_event(event: Any) -> dict[str, Any]:
     if int(event["trace_id"], 16) == 0 or int(event["span_id"], 16) == 0:
         raise ValueError("trace_id/span_id must be nonzero")
     return event
+
+
+def validate_routing_event(event: Any) -> dict[str, Any]:
+    if not isinstance(event, dict):
+        raise ValueError("routing event payload must be a JSON object")
+    required = {
+        "schema": str, "timestamp_ns": int, "sequence": int, "selected_index": int,
+        "backend": str, "locality_rank": str, "fallback_reason": str,
+        "fastest_fresh_latency_ns": int, "fresh_latency_candidates": int,
+        "safe_locality_candidates": int, "best_score": int, "score_threshold": int,
+        "selected_score": int, "latency_component": int, "load_component": int,
+        "used_latency": bool,
+    }
+    for key, expected in required.items():
+        if key not in event or type(event[key]) is not expected:
+            raise ValueError(f"missing/invalid routing field: {key}")
+    if event["schema"] != ROUTING_SCHEMA:
+        raise ValueError(f"unsupported schema: {event['schema']}")
+    if event["sequence"] <= 0 or event["timestamp_ns"] <= 0 or not event["backend"]:
+        raise ValueError("routing sequence/timestamp/backend must be valid")
+    if event["locality_rank"] not in ROUTING_LOCALITIES:
+        raise ValueError("invalid routing locality")
+    if event["fallback_reason"] not in ROUTING_FALLBACKS:
+        raise ValueError("invalid routing fallback reason")
+    if event["selected_score"] > event["score_threshold"] or event["best_score"] > event["selected_score"]:
+        raise ValueError("routing score ordering is invalid")
+    return event
+
+
+def build_otlp_routing_logs_request(event: dict[str, Any], observed_unix_ns: int | None = None) -> dict[str, Any]:
+    event = validate_routing_event(event)
+    observed = time.time_ns() if observed_unix_ns is None else observed_unix_ns
+    compact = json.dumps(event, separators=(",", ":"), ensure_ascii=False)
+    attrs = [
+        _attribute("shp.schema", event["schema"]),
+        _attribute("shp.routing.sequence", event["sequence"]),
+        _attribute("shp.routing.monotonic_ns", event["timestamp_ns"]),
+        _attribute("shp.routing.backend", event["backend"]),
+        _attribute("shp.routing.locality", event["locality_rank"]),
+        _attribute("shp.routing.fallback", event["fallback_reason"]),
+        _attribute("shp.routing.used_latency", event["used_latency"]),
+        _attribute("shp.routing.selected_score", event["selected_score"]),
+    ]
+    return {"resourceLogs": [{"resource": {"attributes": [
+        _attribute("service.name", "self-healing-proxy"),
+        _attribute("service.namespace", "shp"),
+        _attribute("telemetry.bridge", "phase55-routing"),
+    ]}, "scopeLogs": [{"scope": {"name": "self_healing_proxy.phase55", "version": "1"},
+        "logRecords": [{"timeUnixNano": str(observed), "observedTimeUnixNano": str(observed),
+        "severityNumber": 9, "severityText": "INFO", "body": {"stringValue": compact},
+        "attributes": attrs}]}]}]}
 
 
 def build_otlp_logs_request(event: dict[str, Any], observed_unix_ns: int | None = None) -> dict[str, Any]:
@@ -264,7 +334,7 @@ def _gauge_metric(name: str, description: str, unit: str, value: int, now_ns: in
     }
 
 
-def build_otlp_metrics_request(metrics: MetricsState, counters: Counters, now_unix_ns: int | None = None) -> dict[str, Any]:
+def build_otlp_metrics_request(metrics: MetricsState, counters: Counters, now_unix_ns: int | None = None, routing: RoutingMetricsState | None = None) -> dict[str, Any]:
     """Build cumulative OTLP metrics with bounded label cardinality."""
     now_ns = time.time_ns() if now_unix_ns is None else now_unix_ns
     start_ns = metrics.start_unix_ns
@@ -336,6 +406,18 @@ def build_otlp_metrics_request(metrics: MetricsState, counters: Counters, now_un
         ),
     ]
 
+    if routing is not None:
+        metric_docs.extend([
+            _sum_metric("shp.routing.decisions", "Routing decisions observed", "{decision}",
+                [_sum_point(routing.decisions_total, routing.start_unix_ns, now_ns)]),
+            _sum_metric("shp.routing.locality", "Routing decisions by bounded locality tier", "{decision}",
+                [_sum_point(v, routing.start_unix_ns, now_ns, [_metric_attr("tier", k)]) for k, v in sorted(routing.by_locality.items())]),
+            _sum_metric("shp.routing.fallbacks", "Routing decisions by bounded fallback reason", "{decision}",
+                [_sum_point(v, routing.start_unix_ns, now_ns, [_metric_attr("reason", k)]) for k, v in sorted(routing.by_fallback.items())]),
+            _sum_metric("shp.routing.latency_signal", "Routing decisions grouped by fresh-latency usage", "{decision}",
+                [_sum_point(v, routing.start_unix_ns, now_ns, [_metric_attr("used", str(k).lower())]) for k, v in sorted(routing.latency_used.items())]),
+        ])
+
     return {
         "resourceMetrics": [
             {
@@ -369,131 +451,6 @@ def _metrics_endpoint(logs_endpoint: str, override: str | None = None) -> str:
     parsed = parsed._replace(path="/v1/metrics")
     return urllib.parse.urlunparse(parsed)
 
-
-
-TRACE_SCHEMA = "shp.trace.v1"
-
-def _hex_id(value: Any, length: int, name: str, allow_empty: bool = False) -> str:
-    if allow_empty and value == "":
-        return ""
-    if not isinstance(value, str) or len(value) != length:
-        raise ValueError(f"invalid {name} length")
-    if value.lower() != value or any(ch not in "0123456789abcdef" for ch in value):
-        raise ValueError(f"{name} must be lowercase hexadecimal")
-    if int(value, 16) == 0:
-        raise ValueError(f"{name} must be nonzero")
-    return value
-
-def validate_trace_batch(doc: Any) -> dict[str, Any]:
-    if not isinstance(doc, dict) or doc.get("schema") != TRACE_SCHEMA:
-        raise ValueError("unsupported trace schema")
-    _hex_id(doc.get("request_id"), 32, "request_id")
-    _hex_id(doc.get("trace_id"), 32, "trace_id")
-    if not isinstance(doc.get("trace_source"), str):
-        raise ValueError("trace_source must be a string")
-    if not isinstance(doc.get("trace_flags"), int) or not (0 <= doc["trace_flags"] <= 255):
-        raise ValueError("trace_flags must be in 0..255")
-    spans = doc.get("spans")
-    if not isinstance(spans, list) or len(spans) < 2 or len(spans) > 64:
-        raise ValueError("trace batch must contain 2..64 spans")
-    seen: set[str] = set()
-    roots = 0
-    for span in spans:
-        if not isinstance(span, dict):
-            raise ValueError("span must be an object")
-        sid = _hex_id(span.get("span_id"), 16, "span_id")
-        if sid in seen:
-            raise ValueError("duplicate span_id")
-        seen.add(sid)
-        parent = _hex_id(span.get("parent_span_id"), 16, "parent_span_id", allow_empty=True)
-        if parent == "":
-            roots += 1
-        if span.get("kind") not in {"server", "client"}:
-            raise ValueError("unsupported span kind")
-        if span.get("result") not in {"success", "retry", "error"}:
-            raise ValueError("unsupported span result")
-        for key in ("start_unix_ns", "end_unix_ns", "duration_ns", "attempt"):
-            if not isinstance(span.get(key), int) or span[key] < 0:
-                raise ValueError(f"invalid span field: {key}")
-        if span["end_unix_ns"] <= span["start_unix_ns"] or span["duration_ns"] <= 0:
-            raise ValueError("span duration/timestamps must be positive")
-        wall_delta = span["end_unix_ns"] - span["start_unix_ns"]
-        if abs(wall_delta - span["duration_ns"]) > 5_000_000:
-            raise ValueError("duration must agree with derived wall timestamps within 5ms")
-        if not isinstance(span.get("name"), str) or not span["name"]:
-            raise ValueError("span name required")
-        if not isinstance(span.get("backend"), str):
-            raise ValueError("backend must be a string")
-    request_spans = [sp for sp in spans if sp["name"] == "proxy.request"]
-    if len(request_spans) != 1:
-        raise ValueError("exactly one proxy.request span required")
-    request_id = request_spans[0]["span_id"]
-    for span in spans:
-        if span["name"] == "proxy.backend_attempt" and span["parent_span_id"] != request_id:
-            raise ValueError("backend attempt must be child of request span")
-    return doc
-
-def _span_kind(kind: str) -> int:
-    return 2 if kind == "server" else 3
-
-def _span_status(result: str) -> dict[str, Any]:
-    if result == "success":
-        return {"code": 1}
-    return {"code": 2, "message": result}
-
-def build_otlp_traces_request(doc: dict[str, Any]) -> dict[str, Any]:
-    doc = validate_trace_batch(doc)
-    spans_out = []
-    for span in doc["spans"]:
-        attrs = [
-            _attribute("shp.request_id", doc["request_id"]),
-            _attribute("shp.trace_source", doc["trace_source"]),
-            _attribute("shp.result", span["result"]),
-            _attribute("shp.duration_ns", span["duration_ns"]),
-        ]
-        if span["attempt"] > 0:
-            attrs.append(_attribute("shp.attempt", span["attempt"]))
-        if span["backend"]:
-            attrs.append(_attribute("shp.backend", span["backend"]))
-        out = {
-            "traceId": doc["trace_id"],
-            "spanId": span["span_id"],
-            "name": span["name"],
-            "kind": _span_kind(span["kind"]),
-            "startTimeUnixNano": str(span["start_unix_ns"]),
-            "endTimeUnixNano": str(span["end_unix_ns"]),
-            "attributes": attrs,
-            "status": _span_status(span["result"]),
-            "flags": doc["trace_flags"],
-        }
-        if span["parent_span_id"]:
-            out["parentSpanId"] = span["parent_span_id"]
-        spans_out.append(out)
-    return {
-        "resourceSpans": [{
-            "resource": {"attributes": [
-                _attribute("service.name", "self-healing-proxy"),
-                _attribute("service.namespace", "shp"),
-                _attribute("telemetry.bridge", "phase36-otlp-traces"),
-            ]},
-            "scopeSpans": [{
-                "scope": {"name": "self_healing_proxy.phase36", "version": "1"},
-                "spans": spans_out,
-            }],
-        }]
-    }
-
-def _traces_endpoint(logs_endpoint: str, override: str | None = None) -> str:
-    if override:
-        parsed = urllib.parse.urlparse(override)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("OTLP traces endpoint must be an http(s) URL")
-        if parsed.path in {"", "/", "/v1/logs"}:
-            parsed = parsed._replace(path="/v1/traces")
-        return urllib.parse.urlunparse(parsed)
-    parsed = urllib.parse.urlparse(_validate_endpoint(logs_endpoint))
-    parsed = parsed._replace(path="/v1/traces")
-    return urllib.parse.urlunparse(parsed)
 
 def export_otlp_http(endpoint: str, request_doc: dict[str, Any], timeout_ms: int) -> tuple[bool, str]:
     payload = json.dumps(request_doc, separators=(",", ":")).encode("utf-8")
@@ -584,14 +541,13 @@ def prepare_listener(path_text: str) -> socket.socket:
 def run_bridge(args: argparse.Namespace) -> int:
     endpoint = _validate_endpoint(args.otlp_endpoint)
     metrics_endpoint = _metrics_endpoint(endpoint, args.metrics_endpoint)
-    traces_endpoint = _traces_endpoint(endpoint, args.traces_endpoint)
     counters = Counters()
     metrics = MetricsState(max_backends=args.max_backend_labels)
+    routing_metrics = RoutingMetricsState()
     listener = prepare_listener(args.socket)
     print(
         f"PHASE34_OTEL_BRIDGE_READY path={args.socket} endpoint={endpoint} "
-        f"timeout_ms={args.request_timeout_ms} metrics_endpoint={metrics_endpoint} "
-        f"traces_endpoint={traces_endpoint}",
+        f"timeout_ms={args.request_timeout_ms} metrics_endpoint={metrics_endpoint}",
         flush=True,
     )
 
@@ -617,87 +573,91 @@ def run_bridge(args: argparse.Namespace) -> int:
                     _frame_type, payload = frame
                     counters.received += 1
                     try:
-                        doc = json.loads(payload.decode("utf-8"))
-                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        event = json.loads(payload.decode("utf-8"))
+                        schema = event.get("schema") if isinstance(event, dict) else None
+                        if schema == SCHEMA:
+                            event = validate_phase33_event(event)
+                            otlp_request = build_otlp_logs_request(event)
+                            metrics.observe(event)
+                            event_name = event["event"]
+                            event_detail = f"attempt={event['attempt']} trace_id={event['trace_id']}"
+                        elif schema == ROUTING_SCHEMA:
+                            event = validate_routing_event(event)
+                            otlp_request = build_otlp_routing_logs_request(event)
+                            routing_metrics.observe(event)
+                            event_name = "routing_decision"
+                            event_detail = f"sequence={event['sequence']} locality={event['locality_rank']}"
+                        else:
+                            raise ValueError(f"unsupported schema: {schema}")
+                    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                         counters.invalid += 1
                         print(f"PHASE34_INVALID_EVENT error={exc}", file=sys.stderr, flush=True)
                         continue
 
-                    schema = doc.get("schema") if isinstance(doc, dict) else None
-                    if schema == SCHEMA:
-                        try:
-                            event = validate_phase33_event(doc)
-                            otlp_request = build_otlp_logs_request(event)
-                            metrics.observe(event)
-                        except ValueError as exc:
-                            counters.invalid += 1
-                            print(f"PHASE34_INVALID_EVENT error={exc}", file=sys.stderr, flush=True)
-                            continue
-                        ok, detail = export_otlp_http(endpoint, otlp_request, args.request_timeout_ms)
-                        if ok:
-                            counters.exported += 1
-                            print(
-                                f"PHASE34_EXPORT_OK event={event['event']} attempt={event['attempt']} "
-                                f"trace_id={event['trace_id']} detail={detail}", flush=True)
-                        else:
-                            counters.export_failed += 1
-                            print(
-                                f"PHASE34_EXPORT_FAILED event={event['event']} attempt={event['attempt']} detail={detail}",
-                                file=sys.stderr, flush=True)
-                            if args.require_export:
-                                exit_code = 1
-
-                        if args.metrics_export_every > 0 and counters.received % args.metrics_export_every == 0:
-                            metrics_doc = build_otlp_metrics_request(metrics, counters)
-                            metrics_ok, metrics_detail = export_otlp_http(
-                                metrics_endpoint, metrics_doc, args.request_timeout_ms)
-                            if metrics_ok:
-                                counters.metrics_exported += 1
-                                print(
-                                    f"PHASE35_METRICS_EXPORT_OK requests={metrics.requests_total} "
-                                    f"retries={metrics.retries_total} tracked_backends={metrics.tracked_backends} "
-                                    f"detail={metrics_detail}", flush=True)
-                            else:
-                                counters.metrics_export_failed += 1
-                                print(f"PHASE35_METRICS_EXPORT_FAILED detail={metrics_detail}", file=sys.stderr, flush=True)
-                                if args.require_metrics_export:
-                                    exit_code = 1
-                    elif schema == TRACE_SCHEMA:
-                        try:
-                            trace_doc = validate_trace_batch(doc)
-                            otlp_trace = build_otlp_traces_request(trace_doc)
-                        except ValueError as exc:
-                            counters.invalid += 1
-                            print(f"PHASE36_INVALID_TRACE error={exc}", file=sys.stderr, flush=True)
-                            continue
-                        trace_ok, trace_detail = export_otlp_http(
-                            traces_endpoint, otlp_trace, args.request_timeout_ms)
-                        if trace_ok:
-                            counters.traces_exported += 1
-                            print(
-                                f"PHASE36_TRACE_EXPORT_OK trace_id={trace_doc['trace_id']} "
-                                f"spans={len(trace_doc['spans'])} detail={trace_detail}", flush=True)
-                        else:
-                            counters.traces_export_failed += 1
-                            print(f"PHASE36_TRACE_EXPORT_FAILED detail={trace_detail}", file=sys.stderr, flush=True)
-                            if args.require_trace_export:
-                                exit_code = 1
+                    ok, detail = export_otlp_http(endpoint, otlp_request, args.request_timeout_ms)
+                    if ok:
+                        counters.exported += 1
+                        print(
+                            f"PHASE34_EXPORT_OK event={event_name} {event_detail} detail={detail}",
+                            flush=True,
+                        )
                     else:
-                        counters.invalid += 1
-                        print(f"PHASE34_INVALID_EVENT error=unsupported schema: {schema}", file=sys.stderr, flush=True)
+                        counters.export_failed += 1
+                        print(
+                            f"PHASE34_EXPORT_FAILED event={event_name} {event_detail} detail={detail}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        if args.require_export:
+                            exit_code = 1
+
+                    if args.metrics_export_every > 0 and counters.received % args.metrics_export_every == 0:
+                        metrics_doc = build_otlp_metrics_request(metrics, counters, routing=routing_metrics)
+                        metrics_ok, metrics_detail = export_otlp_http(
+                            metrics_endpoint, metrics_doc, args.request_timeout_ms
+                        )
+                        if metrics_ok:
+                            counters.metrics_exported += 1
+                            print(
+                                f"PHASE35_METRICS_EXPORT_OK requests={metrics.requests_total} "
+                                f"retries={metrics.retries_total} tracked_backends={metrics.tracked_backends} "
+                                f"detail={metrics_detail}",
+                                flush=True,
+                            )
+                        else:
+                            counters.metrics_export_failed += 1
+                            print(
+                                f"PHASE35_METRICS_EXPORT_FAILED detail={metrics_detail}",
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                            if args.require_metrics_export:
+                                exit_code = 1
     finally:
-        if (counters.received > 0 and args.metrics_export_every > 0 and
-                counters.received % args.metrics_export_every != 0 and metrics.requests_total > 0):
-            metrics_doc = build_otlp_metrics_request(metrics, counters)
-            metrics_ok, metrics_detail = export_otlp_http(metrics_endpoint, metrics_doc, args.request_timeout_ms)
+        if (
+            counters.received > 0
+            and args.metrics_export_every > 0
+            and counters.received % args.metrics_export_every != 0
+        ):
+            metrics_doc = build_otlp_metrics_request(metrics, counters, routing=routing_metrics)
+            metrics_ok, metrics_detail = export_otlp_http(
+                metrics_endpoint, metrics_doc, args.request_timeout_ms
+            )
             if metrics_ok:
                 counters.metrics_exported += 1
                 print(
-                    f"PHASE35_METRICS_EXPORT_OK requests={metrics.requests_total} retries={metrics.retries_total} "
-                    f"tracked_backends={metrics.tracked_backends} detail={metrics_detail}", flush=True)
+                    f"PHASE35_METRICS_EXPORT_OK requests={metrics.requests_total} "
+                    f"retries={metrics.retries_total} tracked_backends={metrics.tracked_backends} "
+                    f"detail={metrics_detail}",
+                    flush=True,
+                )
             else:
                 counters.metrics_export_failed += 1
-                print(f"PHASE35_METRICS_EXPORT_FAILED detail={metrics_detail}", file=sys.stderr, flush=True)
+                print(
+                    f"PHASE35_METRICS_EXPORT_FAILED detail={metrics_detail}",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 if args.require_metrics_export:
                     exit_code = 1
         listener.close()
@@ -713,17 +673,16 @@ def run_bridge(args: argparse.Namespace) -> int:
     print(f"INVALID={counters.invalid}", flush=True)
     print(f"METRICS_EXPORTED={counters.metrics_exported}", flush=True)
     print(f"METRICS_EXPORT_FAILED={counters.metrics_export_failed}", flush=True)
-    print(f"TRACES_EXPORTED={counters.traces_exported}", flush=True)
-    print(f"TRACES_EXPORT_FAILED={counters.traces_export_failed}", flush=True)
     print(f"METRIC_REQUESTS_TOTAL={metrics.requests_total}", flush=True)
     print(f"METRIC_RETRIES_TOTAL={metrics.retries_total}", flush=True)
     print(f"METRIC_TRACKED_BACKENDS={metrics.tracked_backends}", flush=True)
+    print(f"METRIC_ROUTING_DECISIONS={routing_metrics.decisions_total}", flush=True)
     return exit_code
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Bridge SHP structured logs/trace batches to OTLP/HTTP logs, metrics, and traces."
+        description="Bridge SHP Phase 33 framed JSON events to OTLP/HTTP JSON logs."
     )
     parser.add_argument("--socket", required=True, help="Unix socket path for SHP framed EVENTs")
     parser.add_argument(
@@ -735,11 +694,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--metrics-endpoint",
         default=None,
         help="OTLP/HTTP metrics endpoint; default derives /v1/metrics from --otlp-endpoint",
-    )
-    parser.add_argument(
-        "--traces-endpoint",
-        default=None,
-        help="OTLP/HTTP traces endpoint; default derives /v1/traces from --otlp-endpoint",
     )
     parser.add_argument(
         "--metrics-export-every",
@@ -775,11 +729,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="exit nonzero if any OTLP metrics export fails",
     )
-    parser.add_argument(
-        "--require-trace-export",
-        action="store_true",
-        help="exit nonzero if any OTLP trace export fails",
-    )
     return parser
 
 
@@ -796,7 +745,6 @@ def main() -> int:
         parser.error("--max-backend-labels must be in 1..1024")
     try:
         _validate_endpoint(args.otlp_endpoint)
-        _traces_endpoint(args.otlp_endpoint, args.traces_endpoint)
     except ValueError as exc:
         parser.error(str(exc))
 

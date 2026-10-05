@@ -1134,3 +1134,25 @@ make phase54-gate
 ```
 
 Phase boundary: Phase 54 explains routing decisions and bounds trace-capture cost. It does not yet export these events through the Phase 31 telemetry transport, add new routing signals, or tune the Phase 51 weights dynamically.
+
+
+## Phase 55 - Edge-Routing Telemetry Export and Metrics
+
+Phase 55 connects the Phase 54 `shp.routing.v1` explanation event to the existing Stage 4 observability path. The proxy side remains best-effort and nonblocking: `routing_telemetry_emit()` serializes into a fixed 1 KiB stack buffer and calls the existing bounded `telemetry_channel_enqueue()`. A missing collector or a full queue drops routing telemetry instead of delaying routing.
+
+The existing OpenTelemetry bridge now accepts both request telemetry (`shp.telemetry.v1`) and routing telemetry (`shp.routing.v1`). Routing events become OTLP logs without inventing trace/span IDs. The routing event's monotonic `timestamp_ns` is preserved as `shp.routing.monotonic_ns`; the bridge uses its own wall-clock observation time for OTLP `timeUnixNano`.
+
+Routing metrics intentionally avoid backend-name labels. The only metric dimensions are fixed enums/booleans: `SITE|ZONE|REGION|REMOTE`, the four fallback reasons, and `used_latency=true|false`. This keeps cardinality bounded even if backend identities change.
+
+Useful commands:
+
+```bash
+make test-routing-telemetry
+./build/routing_telemetry_lab --scenario connected
+./build/routing_telemetry_lab --scenario missing
+./build/routing_telemetry_lab --scenario bounded
+make sanitize-routing-telemetry
+make phase55-gate
+```
+
+Phase boundary: Phase 55 exports routing explanations and derives low-cardinality metrics. It does not add new routing policy, dynamically tune adaptive weights, or build the final routing dashboard; those remain later Stage 6 work.

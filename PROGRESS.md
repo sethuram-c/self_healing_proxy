@@ -2408,7 +2408,7 @@ PASS ON FEDORA (`make phase53-gate`).
 
 ## Phase 54 - Routing Decision Observability
 
-**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+**Status:** COMPLETE
 
 ### Goal
 Explain each adaptive routing selection with bounded structured facts while preserving the existing untraced API and Phase 53 performance contract.
@@ -2422,9 +2422,38 @@ Explain each adaptive routing selection with bounded structured facts while pres
 - Unit, integration, sanitizer, Phase 53 performance regression, and global regression gates are wired into `phase54-gate`.
 
 ### Quality gate
-Run `make phase54-gate` on Fedora. Exact marker:
+PASS ON FEDORA (`make phase54-gate`).
 
-`Phase 54 gate passed: bounded structured routing-decision telemetry explains locality fallback, latency freshness, normalized load/latency scores, fairness thresholds, and trace capture stays inside its hot-path overhead budget with regressions and sanitizers completed.`
+### Commit
+`4c16f0e feat: add routing decision observability`
 
 ### Next Phase
 Phase 55 - edge-routing telemetry export and operational metrics.
+
+
+## Phase 55 - Edge-Routing Telemetry Export and Metrics
+
+**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+
+### Goal
+Export `shp.routing.v1` routing decisions through the existing bounded nonblocking Stage 4 telemetry path, map them to OTLP logs, and derive bounded-cardinality operational metrics without allowing telemetry failure to affect routing.
+
+### Implemented
+- `include/routing_telemetry.h` / `src/routing_telemetry.c`: fixed-buffer routing-event serialization plus enqueue onto the existing Phase 31 `telemetry_channel`.
+- Disconnected collectors and full bounded queues intentionally drop newest routing telemetry while preserving request-path progress.
+- `control-plane/otel_bridge.py`: accepts both the existing `shp.telemetry.v1` request events and new `shp.routing.v1` routing events; routing monotonic timestamps are preserved as attributes while OTLP log timestamps use bridge wall-clock observation time.
+- `RoutingMetricsState`: fixed label domains only - locality tier, fallback reason, and whether fresh latency influenced the decision. Backend names are deliberately excluded from routing metric labels.
+- Routing metrics: `shp.routing.decisions`, `shp.routing.locality`, `shp.routing.fallbacks`, and `shp.routing.latency_signal`.
+- A real integration test sends framed routing events from the C producer through the Unix socket into the Python OTLP bridge and captures both `/v1/logs` and `/v1/metrics` at a local fake OTLP/HTTP endpoint.
+- Existing Phase 34/35 bridge unit contracts remain compatible.
+
+### Failure-isolation contract
+Routing telemetry is best-effort. Missing collectors, queue pressure, and export failures cannot block or invalidate the routing decision. The C producer only serializes into a fixed stack buffer and enqueues on the already-bounded telemetry channel. OTLP/HTTP remains in the separate control-plane bridge process.
+
+### Quality gate
+Run `make phase55-gate` on Fedora. Exact marker:
+
+`Phase 55 gate passed: shp.routing.v1 events use the bounded nonblocking telemetry path, OTLP log mapping preserves routing explanations, low-cardinality routing metrics expose locality/fallback/latency use, telemetry failure stays isolated, regressions, and sanitizers completed.`
+
+### Next Phase
+Phase 56 - edge-routing dashboards and operational policy views.
