@@ -2433,7 +2433,7 @@ Phase 55 - edge-routing telemetry export and operational metrics.
 
 ## Phase 55 - Edge-Routing Telemetry Export and Metrics
 
-**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+**Status:** COMPLETE
 
 ### Goal
 Export `shp.routing.v1` routing decisions through the existing bounded nonblocking Stage 4 telemetry path, map them to OTLP logs, and derive bounded-cardinality operational metrics without allowing telemetry failure to affect routing.
@@ -2451,9 +2451,37 @@ Export `shp.routing.v1` routing decisions through the existing bounded nonblocki
 Routing telemetry is best-effort. Missing collectors, queue pressure, and export failures cannot block or invalidate the routing decision. The C producer only serializes into a fixed stack buffer and enqueues on the already-bounded telemetry channel. OTLP/HTTP remains in the separate control-plane bridge process.
 
 ### Quality gate
-Run `make phase55-gate` on Fedora. Exact marker:
+PASS ON FEDORA (`make phase55-gate`).
 
-`Phase 55 gate passed: shp.routing.v1 events use the bounded nonblocking telemetry path, OTLP log mapping preserves routing explanations, low-cardinality routing metrics expose locality/fallback/latency use, telemetry failure stays isolated, regressions, and sanitizers completed.`
+### Commit
+`a8b96db feat: export edge routing telemetry`
 
 ### Next Phase
 Phase 56 - edge-routing dashboards and operational policy views.
+
+
+## Phase 56 - Edge-Routing Operational Views
+
+**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+
+### Goal
+Turn Phase 55 bounded routing telemetry into provisioned operator-facing Grafana views that make locality degradation, fallback pressure, and loss of fresh latency evidence immediately visible without introducing high-cardinality metrics or changing routing behavior.
+
+### Implemented
+- `observability/grafana/dashboards/edge-routing-operations.json`: dedicated `shp-edge-routing` dashboard.
+- Routing Decision Rate, Remote Routing Ratio, Fallback Ratio, Fresh Latency Coverage, Locality Distribution, Fallback Rate by Reason, structured routing logs, and an embedded operator interpretation panel.
+- Prometheus queries consume only Phase 55's fixed metric dimensions: `tier`, `reason`, and `used`; backend/request/trace identifiers are absent from routing metric queries.
+- Routing logs are scoped to `service_name="self-healing-proxy"` and `schema="shp.routing.v1"`, retaining backend-level diagnostic identity in logs rather than metrics.
+- `tests/unit/test_edge_routing_dashboard.py`: locks dashboard identity, required panels, low-cardinality query contract, ratio denominators, and runbook safety language.
+- `tests/integration/test_edge_routing_views.py`: optional real LGTM path proves the dashboard is provisioned and Grafana sees routing metrics/logs produced through the real Phase 55 C -> UDS -> bridge -> OTLP path.
+
+### Operational contract
+The dashboard is explanatory, not authoritative. Remote routing or fallback growth is a symptom that local safe choices have disappeared; low fresh-latency coverage means adaptive scoring is degrading toward load-only evidence. Operators diagnose health/circuit/capacity and evidence freshness rather than bypassing safety policy.
+
+### Quality gate
+Run `make phase56-gate` on Fedora. Exact marker:
+
+`Phase 56 gate passed: provisioned edge-routing operational views expose locality distribution, fallback pressure, fresh-latency coverage, and structured routing logs using bounded Phase 55 dimensions, real Grafana queries succeed, regressions, and sanitizers completed.`
+
+### Next Phase
+Phase 57 - production routing policy configuration and safe runtime tuning.

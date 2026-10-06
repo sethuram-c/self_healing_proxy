@@ -1,0 +1,340 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Routing Decision Rate",
+      "description": "Observed routing-decision throughput from shp.routing.v1 metrics.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate({__name__=~\"shp[._]routing[._]decisions(_total)?\"}[5m]))",
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Remote Routing Ratio",
+      "description": "Fraction of decisions forced to the REMOTE tier. Rising values indicate local topology degradation or loss of safe local capacity.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(rate({__name__=~\"shp[._]routing[._]locality(_total)?\",tier=\"REMOTE\"}[5m]))) / clamp_min((sum(rate({__name__=~\"shp[._]routing[._]decisions(_total)?\"}[5m]))), 1e-9)",
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Fallback Ratio",
+      "description": "Fraction of decisions whose fallback reason is not NONE.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(rate({__name__=~\"shp[._]routing[._]fallbacks(_total)?\",reason!=\"NONE\"}[5m]))) / clamp_min((sum(rate({__name__=~\"shp[._]routing[._]decisions(_total)?\"}[5m]))), 1e-9)",
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Fresh Latency Coverage",
+      "description": "Fraction of routing decisions that used fresh latency evidence. Falling coverage means selection is degrading toward load-only evidence.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(rate({__name__=~\"shp[._]routing[._]latency[._]signal(_total)?\",used=\"true\"}[5m]))) / clamp_min((sum(rate({__name__=~\"shp[._]routing[._]decisions(_total)?\"}[5m]))), 1e-9)",
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Locality Distribution",
+      "description": "Decision rate by the fixed SITE/ZONE/REGION/REMOTE locality domain.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (tier) (rate({__name__=~\"shp[._]routing[._]locality(_total)?\"}[5m]))",
+          "legendFormat": "{{tier}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Fallback Rate by Reason",
+      "description": "Non-NONE fallback decisions by the closed Phase 54 fallback-reason domain.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (rate({__name__=~\"shp[._]routing[._]fallbacks(_total)?\",reason!=\"NONE\"}[5m]))",
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "logs",
+      "title": "Routing Decision Logs",
+      "description": "Structured shp.routing.v1 decision explanations. Backend identity stays in logs rather than metric labels.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 14,
+        "x": 0,
+        "y": 13
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service_name=\"self-healing-proxy\"} | json | schema=\"shp.routing.v1\"",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      }
+    },
+    {
+      "id": 8,
+      "type": "text",
+      "title": "Operational Interpretation",
+      "gridPos": {
+        "h": 10,
+        "w": 10,
+        "x": 14,
+        "y": 13
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "### Edge routing operating signals\n- **Remote Routing Ratio**: sustained growth means SITE/ZONE/REGION choices are no longer safely available; inspect `fallback_reason` logs before changing policy.\n- **Fallback Ratio**: separates normal locality selection from degraded topology selection. `SITE_UNAVAILABLE`, `SITE_ZONE_UNAVAILABLE`, and `LOCAL_UNAVAILABLE` are bounded policy reasons.\n- **Fresh Latency Coverage**: a drop toward zero means Phase 51/52 is increasingly choosing with load-only evidence; investigate latency-signal freshness rather than treating stale samples as truth.\n- **Locality Distribution**: validates that traffic normally stays in the nearest safe tier and shows when it moves outward.\n- **Routing logs** retain backend identity and scores for diagnosis; metrics intentionally do **not** label by backend/request/trace IDs.\n\n**Operator rule:** dashboards explain symptoms; health/circuit/capacity safety remains authoritative. Never relax safety because a dashboard shows a remote or slower route."
+      }
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 41,
+  "tags": [
+    "self-healing-proxy",
+    "edge-routing",
+    "phase56"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Self-Healing Proxy - Edge Routing Operations",
+  "uid": "shp-edge-routing",
+  "version": 1
+}

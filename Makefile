@@ -239,6 +239,10 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	test-routing-telemetry \
 	sanitize-routing-telemetry \
 	phase55-gate \
+	check-edge-routing-views \
+	test-edge-routing-views \
+	phase56-real \
+	phase56-gate \
 	phase48-gate \
 	stage5-gate \
 	tcp-listener \
@@ -678,6 +682,7 @@ test-unit: \
 	python3 tests/unit/test_otel_bridge.py
 	python3 tests/unit/test_otel_metrics.py
 	python3 tests/unit/test_grafana_dashboard.py
+	python3 tests/unit/test_edge_routing_dashboard.py
 	./$(IO_BUFFER_TEST)
 	./$(NONBLOCKING_TEST)
 	./$(CONNECTION_TEST)
@@ -749,6 +754,7 @@ test-integration: \
 	python3 tests/integration/test_otel_collector_bridge.py
 	python3 tests/integration/test_otel_metrics.py
 	python3 tests/integration/test_grafana_lgtm.py
+	python3 tests/integration/test_edge_routing_views.py
 	python3 tests/integration/test_telemetry_overhead.py
 	python3 tests/integration/test_healing_coordinator.py
 	python3 tests/integration/test_health_state_lab.py
@@ -1810,3 +1816,28 @@ phase55-gate: $(ROUTING_TELEMETRY_TEST) $(ROUTING_TELEMETRY_LAB)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 55 gate passed: shp.routing.v1 events use the bounded nonblocking telemetry path, OTLP log mapping preserves routing explanations, low-cardinality routing metrics expose locality/fallback/latency use, telemetry failure stays isolated, regressions, and sanitizers completed."
+
+
+# Phase 56 - Edge-Routing Operational Views
+check-edge-routing-views:
+	python3 -m py_compile tests/unit/test_edge_routing_dashboard.py tests/integration/test_edge_routing_views.py
+	python3 -m json.tool observability/grafana/dashboards/edge-routing-operations.json >/dev/null
+
+
+test-edge-routing-views: $(ROUTING_TELEMETRY_LAB) check-edge-routing-views
+	python3 tests/unit/test_edge_routing_dashboard.py
+	python3 tests/integration/test_edge_routing_views.py
+
+
+phase56-real: $(ROUTING_TELEMETRY_LAB) check-edge-routing-views
+	PHASE56_REQUIRE_REAL=1 python3 tests/integration/test_edge_routing_views.py
+
+
+phase56-gate: $(ROUTING_TELEMETRY_LAB) check-edge-routing-views
+	$(MAKE) test-edge-routing-views
+	$(MAKE) test-routing-telemetry
+	$(MAKE) test-grafana
+	PHASE56_REQUIRE_REAL=1 python3 tests/integration/test_edge_routing_views.py
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 56 gate passed: provisioned edge-routing operational views expose locality distribution, fallback pressure, fresh-latency coverage, and structured routing logs using bounded Phase 55 dimensions, real Grafana queries succeed, regressions, and sanitizers completed."

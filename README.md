@@ -1156,3 +1156,14 @@ make phase55-gate
 ```
 
 Phase boundary: Phase 55 exports routing explanations and derives low-cardinality metrics. It does not add new routing policy, dynamically tune adaptive weights, or build the final routing dashboard; those remain later Stage 6 work.
+
+
+## Phase 56 - Edge-Routing Operational Views
+
+Phase 56 turns the bounded `shp.routing.v1` log/metric contract into an operator-facing Grafana dashboard without changing routing policy or metric cardinality. The new provisioned dashboard is `observability/grafana/dashboards/edge-routing-operations.json` with UID `shp-edge-routing`.
+
+The dashboard answers four operational questions: where traffic is being routed (`SITE/ZONE/REGION/REMOTE`), whether topology fallback is increasing, whether fresh latency evidence is still participating in decisions, and what structured routing explanations say when a route degrades. Derived ratio panels use only the cumulative Phase 55 metric families and fixed labels (`tier`, `reason`, `used`). Backend identity remains in logs, never in Prometheus label dimensions.
+
+Run `make test-edge-routing-views` for structural/dashboard tests. `make phase56-real` starts the pinned Phase 37 LGTM stack, provisions the new dashboard, sends three real routing events through the Phase 55 C -> UDS -> bridge -> OTLP path, and verifies Grafana can see the routing metrics and logs. `make phase56-gate` adds Phase 55 telemetry regression, Phase 37 dashboard regression, full tests, and sanitizers.
+
+The operator rule is deliberate: dashboards explain symptoms but never weaken health, circuit, capacity, or locality safety. A rise in remote/fallback ratios should trigger diagnosis of local availability and routing evidence, not a policy bypass.
