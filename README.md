@@ -1167,3 +1167,35 @@ The dashboard answers four operational questions: where traffic is being routed 
 Run `make test-edge-routing-views` for structural/dashboard tests. `make phase56-real` starts the pinned Phase 37 LGTM stack, provisions the new dashboard, sends three real routing events through the Phase 55 C -> UDS -> bridge -> OTLP path, and verifies Grafana can see the routing metrics and logs. `make phase56-gate` adds Phase 55 telemetry regression, Phase 37 dashboard regression, full tests, and sanitizers.
 
 The operator rule is deliberate: dashboards explain symptoms but never weaken health, circuit, capacity, or locality safety. A rise in remote/fallback ratios should trigger diagnosis of local availability and routing evidence, not a policy bypass.
+
+
+## Phase 57 - Production Routing Policy Configuration
+
+Phase 57 converts the soft adaptive-routing constants from Phases 50-51 into one explicit, validated startup policy without making safety policy configurable. `config/routing-policy.conf` exposes only EWMA alpha, latency freshness lifetime, latency/load weights, and score slack. Health eligibility, circuit semantics, capacity admission, and SITE -> ZONE -> REGION -> REMOTE locality ordering remain hard invariants.
+
+`routing_policy_parse()` is strict and atomic: unknown keys, duplicate keys, malformed unsigned integers, invalid EWMA ratios, zero total scoring weight, excessive staleness, and excessive score slack reject the complete policy. Parsing happens into a temporary candidate and only commits to the caller after full validation. A partial file safely inherits explicit production defaults.
+
+The production freshness setting is expressed in milliseconds and converted to nanoseconds after bounded validation. The default is 5000 ms; this intentionally differs from the tiny simulated time values used in earlier deterministic labs. The scoring defaults remain latency weight 1, load weight 2, and score slack 80.
+
+Useful commands:
+
+```bash
+make test-routing-policy
+./build/routing_policy_lab --scenario defaults
+./build/routing_policy_lab --scenario show --config config/routing-policy.conf
+./build/routing_policy_lab --scenario decision
+make sanitize-routing-policy
+make phase57-gate
+```
+
+A latency-heavy temporary policy can demonstrate controlled tuning without changing locality or safety:
+
+```text
+latency_weight=10
+load_weight=1
+score_slack=0
+```
+
+With the Phase 57 decision fixture the default policy prefers the slightly slower but lightly loaded SITE peer, while that latency-heavy policy prefers the faster but hotter SITE peer. Both selections remain in the same safe SITE locality tier.
+
+Phase boundary: Phase 57 provides validated startup/runtime-policy input for soft routing optimization. It does not permit dynamic hot reload, automatic tuning, safety-policy override, or locality reordering; those concerns remain outside this phase.

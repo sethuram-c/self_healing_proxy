@@ -2462,7 +2462,7 @@ Phase 56 - edge-routing dashboards and operational policy views.
 
 ## Phase 56 - Edge-Routing Operational Views
 
-**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+**Status:** COMPLETE
 
 ### Goal
 Turn Phase 55 bounded routing telemetry into provisioned operator-facing Grafana views that make locality degradation, fallback pressure, and loss of fresh latency evidence immediately visible without introducing high-cardinality metrics or changing routing behavior.
@@ -2483,5 +2483,40 @@ Run `make phase56-gate` on Fedora. Exact marker:
 
 `Phase 56 gate passed: provisioned edge-routing operational views expose locality distribution, fallback pressure, fresh-latency coverage, and structured routing logs using bounded Phase 55 dimensions, real Grafana queries succeed, regressions, and sanitizers completed.`
 
+### Quality gate
+PASS ON FEDORA (`make phase56-gate`).
+
+### Commit
+`d0b296f feat: add edge routing operational views`
+
 ### Next Phase
 Phase 57 - production routing policy configuration and safe runtime tuning.
+
+
+
+## Phase 57 - Production Routing Policy Configuration
+
+**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+
+### Goal
+Move soft adaptive-routing tuning into one strict, bounded startup policy while keeping health, circuit, capacity, and locality ordering non-configurable.
+
+### Implemented
+- `include/routing_policy.h` / `src/routing_policy.c`: explicit routing policy defaults, validation, strict fixed-size parsing, file loading, and latency-signal initialization.
+- Production policy keys: EWMA numerator/denominator, latency staleness in milliseconds, latency/load weights, and score slack only.
+- Atomic parse semantics: invalid/unknown/duplicate settings reject the complete candidate without partially mutating the caller's current policy.
+- Bounded domains: EWMA denominator <= 1024, staleness <= 10 minutes, weights <= 1000, score slack <= 4000, and at least one scoring weight must be nonzero.
+- `config/routing-policy.conf`: documented default production profile (`1/4`, 5000 ms, `1:2`, slack `80`).
+- `routing_policy_lab`: proves default and latency-heavy policies can change soft preference between two safe SITE peers without changing locality or safety eligibility.
+- Unit, integration, sanitizer, adaptive-selector regression, routing-performance regression, and global gates are wired into `phase57-gate`.
+
+### Safety contract
+Configuration can tune preference only. It cannot make an unhealthy/open/full backend eligible, cannot reorder SITE/ZONE/REGION/REMOTE locality precedence, and cannot disable the underlying health/circuit/capacity filters.
+
+### Quality gate
+Run `make phase57-gate` on Fedora. Exact marker:
+
+`Phase 57 gate passed: strict atomic routing-policy configuration exposes only bounded adaptive tuning, rejects malformed and unsafe settings, preserves safety and locality invariants, changes soft routing preference deterministically, regressions, and sanitizers completed.`
+
+### Next Phase
+Phase 58 - controlled policy reload / rollout safety.

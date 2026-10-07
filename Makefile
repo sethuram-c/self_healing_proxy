@@ -105,6 +105,10 @@ ROUTING_TELEMETRY_TEST := build/test_routing_telemetry
 ROUTING_TELEMETRY_LAB := build/routing_telemetry_lab
 SANITIZED_ROUTING_TELEMETRY_TEST := build/test_routing_telemetry-sanitized
 SANITIZED_ROUTING_TELEMETRY_LAB := build/routing_telemetry_lab-sanitized
+ROUTING_POLICY_TEST := build/test_routing_policy
+ROUTING_POLICY_LAB := build/routing_policy_lab
+SANITIZED_ROUTING_POLICY_TEST := build/test_routing_policy-sanitized
+SANITIZED_ROUTING_POLICY_LAB := build/routing_policy_lab-sanitized
 SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
@@ -243,6 +247,9 @@ MOCK_BACKEND_TEST := tests/integration/test_mock_backends.py
 	test-edge-routing-views \
 	phase56-real \
 	phase56-gate \
+	test-routing-policy \
+	sanitize-routing-policy \
+	phase57-gate \
 	phase48-gate \
 	stage5-gate \
 	tcp-listener \
@@ -672,7 +679,8 @@ test-unit: \
 	$(ADAPTIVE_AWARE_POOL_TEST) \
 	$(ROUTING_STABILITY_TEST) \
 	$(ROUTING_PERF_TEST) \
-	$(ROUTING_DECISION_TEST)
+	$(ROUTING_DECISION_TEST) \
+	$(ROUTING_POLICY_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -706,6 +714,7 @@ test-unit: \
 	./$(ROUTING_STABILITY_TEST)
 	./$(ROUTING_PERF_TEST)
 	./$(ROUTING_DECISION_TEST)
+	./$(ROUTING_POLICY_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
@@ -727,7 +736,8 @@ test-integration: \
 	$(SELF_HEALING_FAULT_LAB) \
 	$(LATENCY_AWARE_SELECTION_LAB) \
 	$(ADAPTIVE_AWARE_SELECTION_LAB) \
-	$(ROUTING_OBSERVABILITY_LAB)
+	$(ROUTING_OBSERVABILITY_LAB) \
+	$(ROUTING_POLICY_LAB)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -767,6 +777,7 @@ test-integration: \
 	python3 tests/integration/test_latency_aware_selection.py
 	python3 tests/integration/test_adaptive_aware_selection.py
 	python3 tests/integration/test_adaptive_stability.py
+	python3 tests/integration/test_routing_policy.py
 	SKIP_PERF=1 python3 tests/integration/test_routing_observability.py
 
 test-stress: $(EPOLL_SERVER)
@@ -1841,3 +1852,33 @@ phase56-gate: $(ROUTING_TELEMETRY_LAB) check-edge-routing-views
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 56 gate passed: provisioned edge-routing operational views expose locality distribution, fallback pressure, fresh-latency coverage, and structured routing logs using bounded Phase 55 dimensions, real Grafana queries succeed, regressions, and sanitizers completed."
+
+
+# Phase 57 - Production Routing Policy Configuration
+$(ROUTING_POLICY_TEST): tests/unit/test_routing_policy.c src/routing_policy.c src/latency_signal.c src/adaptive_score.c include/routing_policy.h include/latency_signal.h include/adaptive_score.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude tests/unit/test_routing_policy.c src/routing_policy.c src/latency_signal.c src/adaptive_score.c -o $(ROUTING_POLICY_TEST)
+
+$(ROUTING_POLICY_LAB): src/routing_policy_lab.c src/routing_policy.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c include/routing_policy.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude src/routing_policy_lab.c src/routing_policy.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(ROUTING_POLICY_LAB)
+
+test-routing-policy: $(ROUTING_POLICY_TEST) $(ROUTING_POLICY_LAB)
+	./$(ROUTING_POLICY_TEST)
+	python3 tests/integration/test_routing_policy.py
+
+sanitize-routing-policy:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude tests/unit/test_routing_policy.c src/routing_policy.c src/latency_signal.c src/adaptive_score.c -o $(SANITIZED_ROUTING_POLICY_TEST)
+	./$(SANITIZED_ROUTING_POLICY_TEST)
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude src/routing_policy_lab.c src/routing_policy.c src/adaptive_aware_pool.c src/adaptive_score.c src/latency_signal.c src/edge_locality.c src/backend_pool.c src/backend_health.c src/circuit_breaker.c -o $(SANITIZED_ROUTING_POLICY_LAB)
+	ROUTING_POLICY_LAB_BIN=$(SANITIZED_ROUTING_POLICY_LAB) python3 tests/integration/test_routing_policy.py
+
+phase57-gate: $(ROUTING_POLICY_TEST) $(ROUTING_POLICY_LAB)
+	$(MAKE) test-routing-policy
+	$(MAKE) sanitize-routing-policy
+	$(MAKE) test-adaptive-aware-selection
+	$(MAKE) test-edge-routing-perf
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 57 gate passed: strict atomic routing-policy configuration exposes only bounded adaptive tuning, rejects malformed and unsafe settings, preserves safety and locality invariants, changes soft routing preference deterministically, regressions, and sanitizers completed."
