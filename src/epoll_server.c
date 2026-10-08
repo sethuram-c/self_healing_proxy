@@ -4,6 +4,8 @@
 #include "connection.h"
 #include "http_framing.h"
 #include "net_utils.h"
+#include "routing_policy_manager.h"
+#include "adaptive_score.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -38,6 +40,11 @@
     (IO_BUFFER_CAPACITY / 4U)
 
 static volatile sig_atomic_t stop_requested = 0;
+static volatile sig_atomic_t reload_requested = 0;
+
+static int routing_policy_enabled = 0;
+static const char *routing_policy_path = NULL;
+static routing_policy_manager_t routing_policy_manager;
 
 static uint64_t next_connection_id = 1;
 
@@ -248,7 +255,11 @@ static void free_destroyed_connections(void)
 
 static void handle_signal(int signo)
 {
-    (void)signo;
+    if (signo == SIGHUP) {
+        reload_requested = 1;
+        return;
+    }
+
     stop_requested = 1;
 }
 
@@ -268,6 +279,10 @@ static int install_signal_handlers(void)
     }
 
     if (sigaction(SIGTERM, &action, NULL) == -1) {
+        return -1;
+    }
+
+    if (sigaction(SIGHUP, &action, NULL) == -1) {
         return -1;
     }
 
@@ -903,6 +918,143 @@ static int flush_client_to_backend(
 }
 
 
+static const backend_target_t *acquire_backend_with_policy(
+    size_t excluded_index,
+    size_t *selected_index,
+    uint64_t *policy_generation
+)
+{
+    routing_policy_t policy;
+    uint64_t generation = 0;
+
+    if (routing_policy_manager_snapshot(
+            &routing_policy_manager,
+            &policy,
+            &generation) != 0) {
+        return NULL;
+    }
+
+    uint32_t best_score = UINT32_MAX;
+    int found = 0;
+
+    for (size_t i = 0; i < backend_pool.count; ++i) {
+        backend_target_t *candidate = &backend_pool.targets[i];
+
+        if (i == excluded_index
+            || candidate->active_connections >= candidate->max_connections) {
+            continue;
+        }
+
+        adaptive_score_result_t score;
+        if (adaptive_score_compute(
+                0,
+                0,
+                0,
+                candidate->active_connections,
+                candidate->max_connections,
+                &policy.score,
+                &score) != 0) {
+            return NULL;
+        }
+
+        if (!found || score.combined_score < best_score) {
+            best_score = score.combined_score;
+            found = 1;
+        }
+    }
+
+    if (!found) {
+        return NULL;
+    }
+
+    uint64_t threshold64 = (uint64_t)best_score + policy.score.score_slack;
+    uint32_t threshold = threshold64 > UINT32_MAX
+        ? UINT32_MAX
+        : (uint32_t)threshold64;
+
+    for (size_t offset = 0; offset < backend_pool.count; ++offset) {
+        size_t index = (backend_pool.next_index + offset) % backend_pool.count;
+        backend_target_t *candidate = &backend_pool.targets[index];
+
+        if (index == excluded_index
+            || candidate->active_connections >= candidate->max_connections) {
+            continue;
+        }
+
+        adaptive_score_result_t score;
+        if (adaptive_score_compute(
+                0,
+                0,
+                0,
+                candidate->active_connections,
+                candidate->max_connections,
+                &policy.score,
+                &score) != 0) {
+            return NULL;
+        }
+
+        if (score.combined_score > threshold) {
+            continue;
+        }
+
+        candidate->active_connections++;
+        backend_pool.next_index = (index + 1U) % backend_pool.count;
+
+        if (selected_index != NULL) {
+            *selected_index = index;
+        }
+        if (policy_generation != NULL) {
+            *policy_generation = generation;
+        }
+        return candidate;
+    }
+
+    return NULL;
+}
+
+static int reload_live_routing_policy(void)
+{
+    routing_policy_t current;
+    uint64_t generation = 0;
+
+    if (!routing_policy_enabled || routing_policy_path == NULL) {
+        return 0;
+    }
+
+    if (routing_policy_manager_snapshot(
+            &routing_policy_manager,
+            &current,
+            &generation) != 0) {
+        fprintf(stderr, "ROUTING_POLICY_RELOAD_REJECTED reason=snapshot_failed\n");
+        return -1;
+    }
+
+    uint64_t new_generation = 0;
+    int status = routing_policy_manager_reload_file(
+        &routing_policy_manager,
+        routing_policy_path,
+        generation,
+        &new_generation
+    );
+
+    if (status != 0) {
+        fprintf(
+            stderr,
+            "ROUTING_POLICY_RELOAD_REJECTED generation=%llu reason=%s\n",
+            (unsigned long long)generation,
+            strerror(status)
+        );
+        return -1;
+    }
+
+    printf(
+        "ROUTING_POLICY_RELOAD_OK old_generation=%llu new_generation=%llu\n",
+        (unsigned long long)generation,
+        (unsigned long long)new_generation
+    );
+    return 0;
+}
+
 static int start_backend_connection(
     int epoll_fd,
     connection_t *connection,
@@ -911,9 +1063,14 @@ static int start_backend_connection(
 )
 {
     size_t backend_index = 0;
+    uint64_t policy_generation = 0;
 
-    const backend_target_t *target =
-        backend_pool_acquire_next_excluding(
+    const backend_target_t *target = routing_policy_enabled
+        ? acquire_backend_with_policy(
+            excluded_index,
+            &backend_index,
+            &policy_generation)
+        : backend_pool_acquire_next_excluding(
             &backend_pool,
             excluded_index,
             &backend_index
@@ -949,17 +1106,32 @@ static int start_backend_connection(
     connection->backend_selected = 1;
     connection->backend_slot_acquired = 1;
 
-    printf(
-        "Connection %llu selected backend %s "
-        "%s:%u (index=%zu active=%zu/%zu)\n",
-        (unsigned long long)connection->id,
-        target->name,
-        target->ip,
-        (unsigned int)target->port,
-        backend_index,
-        target->active_connections,
-        target->max_connections
-    );
+    if (routing_policy_enabled) {
+        printf(
+            "Connection %llu selected backend %s "
+            "%s:%u (index=%zu active=%zu/%zu policy_generation=%llu)\n",
+            (unsigned long long)connection->id,
+            target->name,
+            target->ip,
+            (unsigned int)target->port,
+            backend_index,
+            target->active_connections,
+            target->max_connections,
+            (unsigned long long)policy_generation
+        );
+    } else {
+        printf(
+            "Connection %llu selected backend %s "
+            "%s:%u (index=%zu active=%zu/%zu)\n",
+            (unsigned long long)connection->id,
+            target->name,
+            target->ip,
+            (unsigned int)target->port,
+            backend_index,
+            target->active_connections,
+            target->max_connections
+        );
+    }
 
     int backend_fd = -1;
 
@@ -2258,9 +2430,58 @@ static int accept_ready_clients(
     }
 }
 
-int main(void)
+static void print_usage(const char *program)
+{
+    fprintf(
+        stderr,
+        "Usage: %s [--routing-policy PATH]\n",
+        program
+    );
+}
+
+int main(int argc, char **argv)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
+
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--help") == 0) {
+            print_usage(argv[0]);
+            return EXIT_SUCCESS;
+        }
+
+        if (strcmp(argv[i], "--routing-policy") == 0) {
+            if (routing_policy_path != NULL || i + 1 >= argc) {
+                print_usage(argv[0]);
+                return 2;
+            }
+            routing_policy_path = argv[++i];
+            continue;
+        }
+
+        print_usage(argv[0]);
+        return 2;
+    }
+
+    if (routing_policy_path != NULL) {
+        routing_policy_t initial_policy;
+        if (routing_policy_load_file(
+                routing_policy_path,
+                &initial_policy) != 0) {
+            fprintf(
+                stderr,
+                "Invalid routing policy file: %s\n",
+                routing_policy_path
+            );
+            return EXIT_FAILURE;
+        }
+        if (routing_policy_manager_init(
+                &routing_policy_manager,
+                &initial_policy) != 0) {
+            fprintf(stderr, "routing_policy_manager_init failed\n");
+            return EXIT_FAILURE;
+        }
+        routing_policy_enabled = 1;
+    }
 
     if (load_timeout_config() == -1) {
         return EXIT_FAILURE;
@@ -2351,9 +2572,21 @@ int main(void)
 
     printf("\n");
 
+    if (routing_policy_enabled) {
+        printf(
+            "Routing policy: path=%s generation=1 reload=SIGHUP\n",
+            routing_policy_path
+        );
+    }
+
     struct epoll_event events[MAX_EVENTS];
 
     while (!stop_requested) {
+        if (reload_requested) {
+            reload_requested = 0;
+            (void)reload_live_routing_policy();
+        }
+
         uint64_t before_wait_ms = monotonic_ms();
 
         check_connection_timeouts(

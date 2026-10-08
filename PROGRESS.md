@@ -2534,3 +2534,22 @@ Status: CURRENT
 - [x] Stress concurrent readers against repeated alternating policy updates.
 - [x] Preserve Phase 57 policy, adaptive-selection, and Phase 53 performance regressions.
 - [ ] Fedora `make phase58-gate` authoritative completion marker.
+
+## Phase 59 - Live Proxy Routing Policy Reload
+
+Status: CURRENT
+
+- [x] Add opt-in `--routing-policy PATH` to the live epoll proxy while preserving legacy round-robin behavior when omitted.
+- [x] Fail startup closed when an explicitly configured routing-policy file is invalid.
+- [x] Handle `SIGHUP` with a signal-safe flag and perform reload work from the normal event loop.
+- [x] Publish only fully parsed/validated candidates through the Phase 58 generation manager.
+- [x] Keep the active generation unchanged after an invalid live reload.
+- [x] Take one coherent policy snapshot for each policy-driven backend decision.
+- [x] Preserve capacity admission as a hard safety invariant; current live path degrades to load-only scoring until latency evidence is wired into the production proxy.
+- [x] Log the bounded numeric policy generation used by each managed routing decision.
+- [x] Prove an in-flight request survives successful and rejected reload attempts.
+- [x] Add focused integration and sanitizer targets plus a Phase 59 gate.
+- [ ] Fedora `make phase59-gate` authoritative completion marker.
+
+### Phase boundary
+Phase 59 provides explicit operator-triggered live reload only. Filesystem watching, automatic tuning, and production live latency-signal ingestion remain later work.

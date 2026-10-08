@@ -1230,3 +1230,27 @@ The Phase 58 gate marker is:
 ```text
 Phase 58 gate passed: validated policies publish as coherent monotonic generations, stale writers are rejected, rollback restores the prior snapshot as a new generation, concurrent readers never observe partial policy state, regressions, and sanitizers completed.
 ```
+
+## Phase 59 - Live proxy routing-policy reload
+
+Phase 59 connects the Phase 58 policy manager to the running epoll proxy. The normal proxy remains backward-compatible and keeps its original round-robin backend selection when no routing policy is supplied. Operators can opt into managed routing policy with `--routing-policy PATH`; that file is parsed and validated before the listener starts, and an invalid explicit policy fails startup closed.
+
+When managed routing is enabled, `SIGHUP` only sets a signal-safe reload flag. The event loop performs the file read, strict Phase 57 validation, and Phase 58 generation-checked publication in normal execution context. A successful reload publishes one complete new generation; an invalid candidate is rejected and the previous generation remains active. Existing connections are untouched by reload.
+
+The live selector takes one coherent policy snapshot per backend decision. In the current production proxy path there is no live latency-signal feed yet, so the managed selector safely degrades to load evidence plus the configured score slack; safety capacity checks remain hard. Each policy-driven selection logs the bounded numeric `policy_generation` used for that decision. Automatic filesystem watching and automatic policy tuning are intentionally outside Phase 59.
+
+Useful commands:
+
+```bash
+./build/epoll_server --routing-policy config/routing-policy.conf
+kill -HUP <proxy-pid>
+make test-live-routing-policy-reload
+make sanitize-live-routing-policy-reload
+make phase59-gate
+```
+
+The Phase 59 gate marker is:
+
+```text
+Phase 59 gate passed: the live proxy validates startup routing policy, reloads complete policy generations on SIGHUP without restart, rejects invalid reloads without changing active state, preserves live connections, exposes the generation used for policy-driven selections, regressions, and sanitizers completed.
+```

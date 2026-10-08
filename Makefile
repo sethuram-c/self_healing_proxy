@@ -514,11 +514,18 @@ $(EPOLL_SERVER): \
 	src/io_buffer.c \
 	src/http_framing.c \
 	src/backend_pool.c \
+	src/routing_policy.c \
+	src/routing_policy_manager.c \
+	src/latency_signal.c \
+	src/adaptive_score.c \
 	include/connection.h \
 	include/backend_pool.h \
 	include/net_utils.h \
 	include/io_buffer.h \
-	include/http_framing.h
+	include/http_framing.h \
+	include/routing_policy.h \
+	include/routing_policy_manager.h \
+	include/adaptive_score.h
 	mkdir -p build
 	$(CC) $(CFLAGS) -Iinclude \
 		src/epoll_server.c \
@@ -527,6 +534,10 @@ $(EPOLL_SERVER): \
 		src/io_buffer.c \
 		src/http_framing.c \
 		src/backend_pool.c \
+	src/routing_policy.c \
+	src/routing_policy_manager.c \
+	src/latency_signal.c \
+	src/adaptive_score.c \
 		-o $(EPOLL_SERVER)
 
 $(BENCH_EPOLL): \
@@ -536,11 +547,18 @@ $(BENCH_EPOLL): \
 	src/io_buffer.c \
 	src/http_framing.c \
 	src/backend_pool.c \
+	src/routing_policy.c \
+	src/routing_policy_manager.c \
+	src/latency_signal.c \
+	src/adaptive_score.c \
 	include/connection.h \
 	include/backend_pool.h \
 	include/net_utils.h \
 	include/io_buffer.h \
-	include/http_framing.h
+	include/http_framing.h \
+	include/routing_policy.h \
+	include/routing_policy_manager.h \
+	include/adaptive_score.h
 	mkdir -p build
 	$(CC) $(BENCH_CFLAGS) -Iinclude \
 		src/epoll_server.c \
@@ -549,6 +567,10 @@ $(BENCH_EPOLL): \
 		src/io_buffer.c \
 		src/http_framing.c \
 		src/backend_pool.c \
+	src/routing_policy.c \
+	src/routing_policy_manager.c \
+	src/latency_signal.c \
+	src/adaptive_score.c \
 		-o $(BENCH_EPOLL)
 
 $(BACKEND_POOL_TEST): \
@@ -964,6 +986,10 @@ sanitize-epoll:
 		src/net_utils.c \
 		src/io_buffer.c \
 		src/backend_pool.c \
+		src/routing_policy.c \
+		src/routing_policy_manager.c \
+		src/latency_signal.c \
+		src/adaptive_score.c \
 		-o $(SANITIZED_EPOLL)
 	EPOLL_SERVER_BIN=$(SANITIZED_EPOLL) \
 		python3 tests/integration/test_epoll_server.py
@@ -1923,3 +1949,36 @@ phase58-gate: $(ROUTING_POLICY_MANAGER_TEST) $(ROUTING_POLICY_RELOAD_LAB)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 58 gate passed: validated policies publish as coherent monotonic generations, stale writers are rejected, rollback restores the prior snapshot as a new generation, concurrent readers never observe partial policy state, regressions, and sanitizers completed."
+
+
+# Phase 59 - Live Proxy Routing Policy Reload
+.PHONY: test-live-routing-policy-reload sanitize-live-routing-policy-reload phase59-gate
+
+test-live-routing-policy-reload: $(EPOLL_SERVER)
+	EPOLL_SERVER_BIN=$(EPOLL_SERVER) python3 tests/integration/test_live_routing_policy_reload.py
+
+sanitize-live-routing-policy-reload:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		src/epoll_server.c \
+		src/connection.c \
+		src/http_framing.c \
+		src/net_utils.c \
+		src/io_buffer.c \
+		src/backend_pool.c \
+		src/routing_policy.c \
+		src/routing_policy_manager.c \
+		src/latency_signal.c \
+		src/adaptive_score.c \
+		-o $(SANITIZED_EPOLL)
+	EPOLL_SERVER_BIN=$(SANITIZED_EPOLL) python3 tests/integration/test_live_routing_policy_reload.py
+
+phase59-gate: $(EPOLL_SERVER)
+	$(MAKE) test-live-routing-policy-reload
+	$(MAKE) sanitize-live-routing-policy-reload
+	$(MAKE) test-routing-policy-reload
+	$(MAKE) test-routing-policy
+	$(MAKE) test-adaptive-aware-selection
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 59 gate passed: the live proxy validates startup routing policy, reloads complete policy generations on SIGHUP without restart, rejects invalid reloads without changing active state, preserves live connections, exposes the generation used for policy-driven selections, regressions, and sanitizers completed."
