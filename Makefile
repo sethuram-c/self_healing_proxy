@@ -109,6 +109,10 @@ ROUTING_POLICY_TEST := build/test_routing_policy
 ROUTING_POLICY_LAB := build/routing_policy_lab
 SANITIZED_ROUTING_POLICY_TEST := build/test_routing_policy-sanitized
 SANITIZED_ROUTING_POLICY_LAB := build/routing_policy_lab-sanitized
+ROUTING_POLICY_MANAGER_TEST := build/test_routing_policy_manager
+ROUTING_POLICY_RELOAD_LAB := build/routing_policy_reload_lab
+SANITIZED_ROUTING_POLICY_MANAGER_TEST := build/test_routing_policy_manager-sanitized
+SANITIZED_ROUTING_POLICY_RELOAD_LAB := build/routing_policy_reload_lab-sanitized
 SANITIZED_TELEMETRY_OVERHEAD_LAB := build/telemetry_overhead_lab-sanitized
 TCP_LISTENER := build/tcp_listener
 IO_BUFFER_TEST := build/test_io_buffer
@@ -680,7 +684,8 @@ test-unit: \
 	$(ROUTING_STABILITY_TEST) \
 	$(ROUTING_PERF_TEST) \
 	$(ROUTING_DECISION_TEST) \
-	$(ROUTING_POLICY_TEST)
+	$(ROUTING_POLICY_TEST) \
+	$(ROUTING_POLICY_MANAGER_TEST)
 	python3 tests/unit/test_smoke.py
 	python3 tests/unit/test_process_inspect.py
 	python3 tests/unit/test_namespace_inspect.py
@@ -715,6 +720,7 @@ test-unit: \
 	./$(ROUTING_PERF_TEST)
 	./$(ROUTING_DECISION_TEST)
 	./$(ROUTING_POLICY_TEST)
+	./$(ROUTING_POLICY_MANAGER_TEST)
 
 test-integration: \
 	$(TCP_LISTENER) \
@@ -737,7 +743,8 @@ test-integration: \
 	$(LATENCY_AWARE_SELECTION_LAB) \
 	$(ADAPTIVE_AWARE_SELECTION_LAB) \
 	$(ROUTING_OBSERVABILITY_LAB) \
-	$(ROUTING_POLICY_LAB)
+	$(ROUTING_POLICY_LAB) \
+	$(ROUTING_POLICY_RELOAD_LAB)
 	python3 tests/integration/test_tcp_listener.py
 	python3 tests/integration/test_epoll_server.py
 	python3 tests/integration/test_connection_state.py
@@ -778,6 +785,7 @@ test-integration: \
 	python3 tests/integration/test_adaptive_aware_selection.py
 	python3 tests/integration/test_adaptive_stability.py
 	python3 tests/integration/test_routing_policy.py
+	python3 tests/integration/test_routing_policy_reload.py
 	SKIP_PERF=1 python3 tests/integration/test_routing_observability.py
 
 test-stress: $(EPOLL_SERVER)
@@ -1882,3 +1890,36 @@ phase57-gate: $(ROUTING_POLICY_TEST) $(ROUTING_POLICY_LAB)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 57 gate passed: strict atomic routing-policy configuration exposes only bounded adaptive tuning, rejects malformed and unsafe settings, preserves safety and locality invariants, changes soft routing preference deterministically, regressions, and sanitizers completed."
+
+
+# Phase 58 - Controlled Policy Reload and Rollout Safety
+.PHONY: test-routing-policy-reload sanitize-routing-policy-reload phase58-gate
+
+$(ROUTING_POLICY_MANAGER_TEST): tests/unit/test_routing_policy_manager.c src/routing_policy_manager.c src/routing_policy.c src/latency_signal.c src/adaptive_score.c include/routing_policy_manager.h include/routing_policy.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -pthread -Iinclude tests/unit/test_routing_policy_manager.c src/routing_policy_manager.c src/routing_policy.c src/latency_signal.c src/adaptive_score.c -o $(ROUTING_POLICY_MANAGER_TEST)
+
+$(ROUTING_POLICY_RELOAD_LAB): src/routing_policy_reload_lab.c src/routing_policy_manager.c src/routing_policy.c src/latency_signal.c src/adaptive_score.c include/routing_policy_manager.h include/routing_policy.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude src/routing_policy_reload_lab.c src/routing_policy_manager.c src/routing_policy.c src/latency_signal.c src/adaptive_score.c -o $(ROUTING_POLICY_RELOAD_LAB)
+
+test-routing-policy-reload: $(ROUTING_POLICY_MANAGER_TEST) $(ROUTING_POLICY_RELOAD_LAB)
+	./$(ROUTING_POLICY_MANAGER_TEST)
+	python3 tests/integration/test_routing_policy_reload.py
+
+sanitize-routing-policy-reload:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -pthread -Iinclude tests/unit/test_routing_policy_manager.c src/routing_policy_manager.c src/routing_policy.c src/latency_signal.c src/adaptive_score.c -o $(SANITIZED_ROUTING_POLICY_MANAGER_TEST)
+	./$(SANITIZED_ROUTING_POLICY_MANAGER_TEST)
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude src/routing_policy_reload_lab.c src/routing_policy_manager.c src/routing_policy.c src/latency_signal.c src/adaptive_score.c -o $(SANITIZED_ROUTING_POLICY_RELOAD_LAB)
+	ROUTING_POLICY_RELOAD_LAB_BIN=$(SANITIZED_ROUTING_POLICY_RELOAD_LAB) python3 tests/integration/test_routing_policy_reload.py
+
+phase58-gate: $(ROUTING_POLICY_MANAGER_TEST) $(ROUTING_POLICY_RELOAD_LAB)
+	$(MAKE) test-routing-policy-reload
+	$(MAKE) sanitize-routing-policy-reload
+	$(MAKE) test-routing-policy
+	$(MAKE) test-adaptive-aware-selection
+	$(MAKE) test-edge-routing-perf
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 58 gate passed: validated policies publish as coherent monotonic generations, stale writers are rejected, rollback restores the prior snapshot as a new generation, concurrent readers never observe partial policy state, regressions, and sanitizers completed."

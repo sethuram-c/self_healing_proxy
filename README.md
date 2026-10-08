@@ -1199,3 +1199,34 @@ score_slack=0
 With the Phase 57 decision fixture the default policy prefers the slightly slower but lightly loaded SITE peer, while that latency-heavy policy prefers the faster but hotter SITE peer. Both selections remain in the same safe SITE locality tier.
 
 Phase boundary: Phase 57 provides validated startup/runtime-policy input for soft routing optimization. It does not permit dynamic hot reload, automatic tuning, safety-policy override, or locality reordering; those concerns remain outside this phase.
+
+## Phase 58 - Controlled policy reload and rollout safety
+
+Phase 58 adds a bounded runtime policy manager above the strict Phase 57 parser. A
+candidate policy is parsed and validated completely before publication. Publication
+uses atomic fields plus a sequence counter so readers either copy a complete old
+snapshot or a complete new snapshot; readers retry if they overlap a writer.
+
+Every publication has a monotonically increasing generation. Administrative writes
+must supply the generation they believe is active; stale writers receive `EAGAIN`
+instead of silently overwriting a newer policy. One prior validated snapshot is kept
+for bounded rollback. Rollback republishes that snapshot as a **new** generation,
+so operational history never moves backward.
+
+Phase 58 still does not make safety configurable. Health eligibility, circuit state,
+capacity admission, and SITE -> ZONE -> REGION -> REMOTE locality precedence remain
+hard routing invariants.
+
+Targeted verification:
+
+```bash
+make test-routing-policy-reload
+make sanitize-routing-policy-reload
+make phase58-gate
+```
+
+The Phase 58 gate marker is:
+
+```text
+Phase 58 gate passed: validated policies publish as coherent monotonic generations, stale writers are rejected, rollback restores the prior snapshot as a new generation, concurrent readers never observe partial policy state, regressions, and sanitizers completed.
+```

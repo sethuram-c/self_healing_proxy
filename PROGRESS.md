@@ -2520,3 +2520,17 @@ Run `make phase57-gate` on Fedora. Exact marker:
 
 ### Next Phase
 Phase 58 - controlled policy reload / rollout safety.
+
+## Phase 58 - Controlled Policy Reload and Rollout Safety
+
+Status: CURRENT
+
+- [x] Keep Phase 57 strict parsing/validation before publication.
+- [x] Publish policy fields under a coherent sequence-guarded atomic snapshot.
+- [x] Give every successful publication a monotonic generation.
+- [x] Reject stale administrative writers with expected-generation checks.
+- [x] Retain one bounded previous snapshot for rollback.
+- [x] Republish rollback as a new generation rather than decrementing history.
+- [x] Stress concurrent readers against repeated alternating policy updates.
+- [x] Preserve Phase 57 policy, adaptive-selection, and Phase 53 performance regressions.
+- [ ] Fedora `make phase58-gate` authoritative completion marker.
