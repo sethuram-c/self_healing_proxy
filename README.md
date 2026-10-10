@@ -1254,3 +1254,27 @@ The Phase 59 gate marker is:
 ```text
 Phase 59 gate passed: the live proxy validates startup routing policy, reloads complete policy generations on SIGHUP without restart, rejects invalid reloads without changing active state, preserves live connections, exposes the generation used for policy-driven selections, regressions, and sanitizers completed.
 ```
+
+## Phase 60 - Automatic routing-policy reload with inotify
+
+Phase 60 keeps the Phase 59 `SIGHUP` control path and adds Linux `inotify` as an event-driven automatic reload source. When `--routing-policy PATH` is enabled, the proxy watches the policy file's parent directory with a nonblocking, close-on-exec inotify descriptor registered in the existing epoll loop; there is no polling thread and no periodic `stat()` loop.
+
+The watcher debounces relevant file events for 100 ms before requesting a reload. Ordinary writes, bursty editor saves, and atomic `rename()` replacement are supported. Watching the parent directory rather than only the original inode means replacement files continue to be observed after deployment-style atomic swaps. A burst of events for one logical save is collapsed into one reload attempt.
+
+Automatic and manual reloads share the same Phase 59 reload function and therefore the same Phase 57/58 safety contract: the complete candidate is parsed and validated before publication, successful publications advance the monotonic policy generation exactly once, and rejected candidates leave the active generation unchanged. Existing connections are not interrupted. Reload logs include a bounded `source=inotify` or `source=sighup` field, and file-change detection is exposed as `ROUTING_POLICY_CHANGE_DETECTED source=inotify`.
+
+Focused validation commands:
+
+```bash
+make test-routing-policy-watcher
+make test-auto-routing-policy-reload
+make sanitize-routing-policy-watcher
+make sanitize-auto-routing-policy-reload
+make phase60-gate
+```
+
+The Phase 60 gate marker is:
+
+```text
+Phase 60 gate passed: Linux inotify is integrated into the epoll control path, file-change bursts are debounced, atomic replacement remains observable, invalid candidates preserve active policy, SIGHUP remains supported, live connections survive automatic reload, regressions, and sanitizers completed.
+```

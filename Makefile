@@ -110,6 +110,8 @@ ROUTING_POLICY_LAB := build/routing_policy_lab
 SANITIZED_ROUTING_POLICY_TEST := build/test_routing_policy-sanitized
 SANITIZED_ROUTING_POLICY_LAB := build/routing_policy_lab-sanitized
 ROUTING_POLICY_MANAGER_TEST := build/test_routing_policy_manager
+ROUTING_POLICY_WATCHER_TEST := build/test_routing_policy_watcher
+SANITIZED_ROUTING_POLICY_WATCHER_TEST := build/test_routing_policy_watcher-sanitized
 ROUTING_POLICY_RELOAD_LAB := build/routing_policy_reload_lab
 SANITIZED_ROUTING_POLICY_MANAGER_TEST := build/test_routing_policy_manager-sanitized
 SANITIZED_ROUTING_POLICY_RELOAD_LAB := build/routing_policy_reload_lab-sanitized
@@ -516,6 +518,7 @@ $(EPOLL_SERVER): \
 	src/backend_pool.c \
 	src/routing_policy.c \
 	src/routing_policy_manager.c \
+	src/routing_policy_watcher.c \
 	src/latency_signal.c \
 	src/adaptive_score.c \
 	include/connection.h \
@@ -525,6 +528,7 @@ $(EPOLL_SERVER): \
 	include/http_framing.h \
 	include/routing_policy.h \
 	include/routing_policy_manager.h \
+	include/routing_policy_watcher.h \
 	include/adaptive_score.h
 	mkdir -p build
 	$(CC) $(CFLAGS) -Iinclude \
@@ -536,6 +540,7 @@ $(EPOLL_SERVER): \
 		src/backend_pool.c \
 	src/routing_policy.c \
 	src/routing_policy_manager.c \
+	src/routing_policy_watcher.c \
 	src/latency_signal.c \
 	src/adaptive_score.c \
 		-o $(EPOLL_SERVER)
@@ -549,6 +554,7 @@ $(BENCH_EPOLL): \
 	src/backend_pool.c \
 	src/routing_policy.c \
 	src/routing_policy_manager.c \
+	src/routing_policy_watcher.c \
 	src/latency_signal.c \
 	src/adaptive_score.c \
 	include/connection.h \
@@ -558,6 +564,7 @@ $(BENCH_EPOLL): \
 	include/http_framing.h \
 	include/routing_policy.h \
 	include/routing_policy_manager.h \
+	include/routing_policy_watcher.h \
 	include/adaptive_score.h
 	mkdir -p build
 	$(CC) $(BENCH_CFLAGS) -Iinclude \
@@ -569,6 +576,7 @@ $(BENCH_EPOLL): \
 		src/backend_pool.c \
 	src/routing_policy.c \
 	src/routing_policy_manager.c \
+	src/routing_policy_watcher.c \
 	src/latency_signal.c \
 	src/adaptive_score.c \
 		-o $(BENCH_EPOLL)
@@ -988,6 +996,7 @@ sanitize-epoll:
 		src/backend_pool.c \
 		src/routing_policy.c \
 		src/routing_policy_manager.c \
+		src/routing_policy_watcher.c \
 		src/latency_signal.c \
 		src/adaptive_score.c \
 		-o $(SANITIZED_EPOLL)
@@ -1968,6 +1977,7 @@ sanitize-live-routing-policy-reload:
 		src/backend_pool.c \
 		src/routing_policy.c \
 		src/routing_policy_manager.c \
+		src/routing_policy_watcher.c \
 		src/latency_signal.c \
 		src/adaptive_score.c \
 		-o $(SANITIZED_EPOLL)
@@ -1982,3 +1992,52 @@ phase59-gate: $(EPOLL_SERVER)
 	$(MAKE) test
 	$(MAKE) sanitize
 	@echo "Phase 59 gate passed: the live proxy validates startup routing policy, reloads complete policy generations on SIGHUP without restart, rejects invalid reloads without changing active state, preserves live connections, exposes the generation used for policy-driven selections, regressions, and sanitizers completed."
+
+# Phase 60 - Automatic Routing Policy Reload
+.PHONY: test-routing-policy-watcher sanitize-routing-policy-watcher test-auto-routing-policy-reload sanitize-auto-routing-policy-reload phase60-gate
+
+$(ROUTING_POLICY_WATCHER_TEST): tests/unit/test_routing_policy_watcher.c src/routing_policy_watcher.c include/routing_policy_watcher.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude tests/unit/test_routing_policy_watcher.c src/routing_policy_watcher.c -o $(ROUTING_POLICY_WATCHER_TEST)
+
+test-routing-policy-watcher: $(ROUTING_POLICY_WATCHER_TEST)
+	./$(ROUTING_POLICY_WATCHER_TEST)
+
+sanitize-routing-policy-watcher:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude tests/unit/test_routing_policy_watcher.c src/routing_policy_watcher.c -o $(SANITIZED_ROUTING_POLICY_WATCHER_TEST)
+	./$(SANITIZED_ROUTING_POLICY_WATCHER_TEST)
+
+test-auto-routing-policy-reload: $(EPOLL_SERVER)
+	EPOLL_SERVER_BIN=$(EPOLL_SERVER) python3 tests/integration/test_auto_routing_policy_reload.py
+
+sanitize-auto-routing-policy-reload:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANFLAGS) -Iinclude \
+		src/epoll_server.c \
+		src/connection.c \
+		src/http_framing.c \
+		src/net_utils.c \
+		src/io_buffer.c \
+		src/backend_pool.c \
+		src/routing_policy.c \
+		src/routing_policy_manager.c \
+		src/routing_policy_watcher.c \
+		src/latency_signal.c \
+		src/adaptive_score.c \
+		-o $(SANITIZED_EPOLL)
+	EPOLL_SERVER_BIN=$(SANITIZED_EPOLL) python3 tests/integration/test_auto_routing_policy_reload.py
+
+phase60-gate: $(EPOLL_SERVER) $(ROUTING_POLICY_WATCHER_TEST)
+	$(MAKE) test-routing-policy-watcher
+	$(MAKE) test-auto-routing-policy-reload
+	$(MAKE) sanitize-routing-policy-watcher
+	$(MAKE) sanitize-auto-routing-policy-reload
+	$(MAKE) test-live-routing-policy-reload
+	$(MAKE) test-routing-policy-reload
+	$(MAKE) test-routing-policy
+	$(MAKE) test-adaptive-aware-selection
+	$(MAKE) test
+	$(MAKE) sanitize
+	@echo "Phase 60 gate passed: Linux inotify is integrated into the epoll control path, file-change bursts are debounced, atomic replacement remains observable, invalid candidates preserve active policy, SIGHUP remains supported, live connections survive automatic reload, regressions, and sanitizers completed."
+

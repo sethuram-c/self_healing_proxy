@@ -5,6 +5,7 @@
 #include "http_framing.h"
 #include "net_utils.h"
 #include "routing_policy_manager.h"
+#include "routing_policy_watcher.h"
 #include "adaptive_score.h"
 
 #include <arpa/inet.h>
@@ -45,6 +46,8 @@ static volatile sig_atomic_t reload_requested = 0;
 static int routing_policy_enabled = 0;
 static const char *routing_policy_path = NULL;
 static routing_policy_manager_t routing_policy_manager;
+static routing_policy_watcher_t routing_policy_watcher;
+static int routing_policy_watcher_enabled = 0;
 
 static uint64_t next_connection_id = 1;
 
@@ -1012,7 +1015,7 @@ static const backend_target_t *acquire_backend_with_policy(
     return NULL;
 }
 
-static int reload_live_routing_policy(void)
+static int reload_live_routing_policy(const char *source)
 {
     routing_policy_t current;
     uint64_t generation = 0;
@@ -1025,7 +1028,8 @@ static int reload_live_routing_policy(void)
             &routing_policy_manager,
             &current,
             &generation) != 0) {
-        fprintf(stderr, "ROUTING_POLICY_RELOAD_REJECTED reason=snapshot_failed\n");
+        fprintf(stderr, "ROUTING_POLICY_RELOAD_REJECTED source=%s reason=snapshot_failed\n",
+            source);
         return -1;
     }
 
@@ -1040,17 +1044,19 @@ static int reload_live_routing_policy(void)
     if (status != 0) {
         fprintf(
             stderr,
-            "ROUTING_POLICY_RELOAD_REJECTED generation=%llu reason=%s\n",
+            "ROUTING_POLICY_RELOAD_REJECTED generation=%llu source=%s reason=%s\n",
             (unsigned long long)generation,
+            source,
             strerror(status)
         );
         return -1;
     }
 
     printf(
-        "ROUTING_POLICY_RELOAD_OK old_generation=%llu new_generation=%llu\n",
+        "ROUTING_POLICY_RELOAD_OK old_generation=%llu new_generation=%llu source=%s\n",
         (unsigned long long)generation,
-        (unsigned long long)new_generation
+        (unsigned long long)new_generation,
+        source
     );
     return 0;
 }
@@ -2572,10 +2578,44 @@ int main(int argc, char **argv)
 
     printf("\n");
 
+    event_source_t routing_policy_watcher_source;
+    memset(&routing_policy_watcher_source, 0, sizeof(routing_policy_watcher_source));
+
     if (routing_policy_enabled) {
-        printf(
-            "Routing policy: path=%s generation=1 reload=SIGHUP\n",
+        int watcher_status = routing_policy_watcher_init(
+            &routing_policy_watcher,
             routing_policy_path
+        );
+        if (watcher_status != 0) {
+            fprintf(
+                stderr,
+                "routing policy watcher init failed: %s\n",
+                strerror(watcher_status)
+            );
+            close(epoll_fd);
+            close(listener_fd);
+            return EXIT_FAILURE;
+        }
+        routing_policy_watcher_enabled = 1;
+        routing_policy_watcher_source.kind = EVENT_SOURCE_LISTENER;
+        routing_policy_watcher_source.object = NULL;
+
+        if (add_event_source(
+                epoll_fd,
+                routing_policy_watcher_fd(&routing_policy_watcher),
+                EPOLLIN,
+                &routing_policy_watcher_source) == -1) {
+            perror("epoll_ctl ADD routing policy watcher");
+            routing_policy_watcher_destroy(&routing_policy_watcher);
+            close(epoll_fd);
+            close(listener_fd);
+            return EXIT_FAILURE;
+        }
+
+        printf(
+            "Routing policy: path=%s generation=1 reload=SIGHUP,inotify debounce_ms=%llu\n",
+            routing_policy_path,
+            (unsigned long long)ROUTING_POLICY_WATCHER_DEBOUNCE_MS
         );
     }
 
@@ -2584,7 +2624,38 @@ int main(int argc, char **argv)
     while (!stop_requested) {
         if (reload_requested) {
             reload_requested = 0;
-            (void)reload_live_routing_policy();
+            (void)reload_live_routing_policy("sighup");
+            if (routing_policy_watcher_enabled) {
+                (void)routing_policy_watcher_discard_pending(
+                    &routing_policy_watcher
+                );
+            }
+        }
+
+        if (routing_policy_watcher_enabled) {
+            int detected = 0;
+            int reload_ready = 0;
+            int watcher_status = routing_policy_watcher_process(
+                &routing_policy_watcher,
+                monotonic_ms(),
+                &detected,
+                &reload_ready
+            );
+            if (watcher_status != 0) {
+                fprintf(
+                    stderr,
+                    "routing policy watcher failed: %s\n",
+                    strerror(watcher_status)
+                );
+                stop_requested = 1;
+                break;
+            }
+            if (detected) {
+                printf("ROUTING_POLICY_CHANGE_DETECTED source=inotify\n");
+            }
+            if (reload_ready) {
+                (void)reload_live_routing_policy("inotify");
+            }
         }
 
         uint64_t before_wait_ms = monotonic_ms();
@@ -2595,10 +2666,17 @@ int main(int argc, char **argv)
         );
         free_destroyed_connections();
 
+        uint64_t wait_now_ms = monotonic_ms();
         int wait_timeout_ms =
-            compute_epoll_wait_timeout_ms(
-                monotonic_ms()
+            compute_epoll_wait_timeout_ms(wait_now_ms);
+
+        if (routing_policy_watcher_enabled) {
+            wait_timeout_ms = routing_policy_watcher_wait_timeout_ms(
+                &routing_policy_watcher,
+                wait_now_ms,
+                wait_timeout_ms
             );
+        }
 
         int ready = epoll_wait(
             epoll_fd,
@@ -2625,6 +2703,34 @@ int main(int argc, char **argv)
                 events[i].data.ptr;
 
             if (source == NULL) {
+                continue;
+            }
+
+            if (routing_policy_watcher_enabled
+                && source == &routing_policy_watcher_source) {
+                int detected = 0;
+                int reload_ready = 0;
+                int watcher_status = routing_policy_watcher_process(
+                    &routing_policy_watcher,
+                    monotonic_ms(),
+                    &detected,
+                    &reload_ready
+                );
+                if (watcher_status != 0) {
+                    fprintf(
+                        stderr,
+                        "routing policy watcher failed: %s\n",
+                        strerror(watcher_status)
+                    );
+                    stop_requested = 1;
+                    break;
+                }
+                if (detected) {
+                    printf("ROUTING_POLICY_CHANGE_DETECTED source=inotify\n");
+                }
+                if (reload_ready) {
+                    (void)reload_live_routing_policy("inotify");
+                }
                 continue;
             }
 
@@ -2707,6 +2813,11 @@ int main(int argc, char **argv)
         total_backend_retries,
         total_retry_suppressions
     );
+
+    if (routing_policy_watcher_enabled) {
+        routing_policy_watcher_destroy(&routing_policy_watcher);
+        routing_policy_watcher_enabled = 0;
+    }
 
     if (close(epoll_fd) == -1) {
         perror("close epoll");

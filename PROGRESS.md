@@ -2553,3 +2553,23 @@ Status: CURRENT
 
 ### Phase boundary
 Phase 59 provides explicit operator-triggered live reload only. Filesystem watching, automatic tuning, and production live latency-signal ingestion remain later work.
+
+## Phase 60 - Automatic Routing Policy Reload
+
+Status: CURRENT
+
+- [x] Add a reusable nonblocking Linux `inotify` routing-policy watcher.
+- [x] Watch the policy parent directory so atomic inode replacement remains observable.
+- [x] Integrate the watcher descriptor into the existing epoll event loop with no polling thread.
+- [x] Debounce burst filesystem events for 100 ms before attempting reload.
+- [x] Reuse the Phase 59 reload transaction for both `source=inotify` and `source=sighup`.
+- [x] Preserve Phase 57 validation and Phase 58 monotonic coherent generation publication.
+- [x] Reject invalid automatic candidates without changing the active generation.
+- [x] Prove repeated atomic replacements continue to trigger reloads.
+- [x] Prove an in-flight connection survives automatic reload.
+- [x] Preserve the explicit SIGHUP operator path and suppress duplicate pending auto-reload after it.
+- [x] Add focused unit, integration, and sanitizer targets plus a Phase 60 gate.
+- [ ] Fedora `make phase60-gate` authoritative completion marker.
+
+### Phase boundary
+Phase 60 automates observation of operator/config-manager file changes only. It does not autonomously tune routing weights from telemetry and does not introduce a separate control-plane daemon.
