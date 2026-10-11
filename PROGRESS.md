@@ -2364,6 +2364,66 @@ PASS ON FEDORA (`make phase49-gate`).
 ### Next Phase
 Phase 50 - measured latency-aware routing signals.
 
+## Phase 50 - Latency-Aware Routing Signals
+
+**Status:** COMPLETE
+
+### Goal
+Add bounded, freshness-aware latency measurements and use them to refine backend choice only within the best safe locality tier established by Phase 49.
+
+### Implemented
+- `include/latency_signal.h` / `src/latency_signal.c`: fixed-memory integer EWMA, monotonic sample validation, and freshness expiry.
+- `include/latency_aware_pool.h` / `src/latency_aware_pool.c`: latency-refined selector layered on health, circuit, capacity, and locality constraints.
+- `src/latency_aware_selection_lab.c`: low-latency cohort, stale-sample, locality-precedence, and no-sample fallback scenarios.
+- `tests/unit/test_latency_aware_pool.c`: EWMA arithmetic, exact freshness boundary, invalid config, stale authority, locality precedence, fairness/slack, and no-sample fallback.
+- `tests/integration/test_latency_aware_selection.py`: CLI-level behavior assertions.
+- `Makefile`: targeted normal/sanitized tests plus Phase 50 full regression gate.
+
+### Routing contract
+Selection first finds the nearest locality tier containing a backend that is health-eligible, circuit-permitted, and below its connection limit. Fresh EWMA values are then compared only inside that tier. All candidates whose EWMA is within `latency_slack_ns` of the fastest fresh signal form the eligible latency cohort and preserve round-robin fairness. Stale signals are ignored. If the tier has no fresh signals, selection falls back to the existing round-robin order rather than failing.
+
+### Quality gate
+PASS ON FEDORA (`make phase50-gate`).
+
+### Commit
+`c4d57ad feat: add latency-aware routing signals`
+
+### Next Phase
+Phase 51 - adaptive load/latency scoring and bounded weighted routing.
+
+## Phase 51 - Adaptive Load/Latency Scoring
+
+**Status:** COMPLETE
+
+### Goal
+Combine fresh latency evidence with instantaneous backend connection utilization in normalized units so routing can adapt to both speed and current pressure while preserving safety, locality, and round-robin fairness among near-equal candidates.
+
+### Scoring contract
+- Safety (health, circuit, capacity) remains a hard filter.
+- The nearest usable locality tier is chosen before scoring.
+- Fresh latency is normalized relative to the fastest fresh peer: fastest = 1000, slower peers scale upward with a bounded cap.
+- Load is normalized as connection utilization in permille: `active_connections / max_connections * 1000`.
+- Integer latency/load weights combine the available components; stale/missing latency is not fabricated and therefore contributes no latency term.
+- `score_slack` creates a near-equal score cohort; the existing rotating cursor preserves fairness inside that cohort.
+- Candidate comparison is side-effect-free; HALF_OPEN circuit permission is consumed only by the final selected backend.
+
+### Implemented
+- `include/adaptive_score.h` / `src/adaptive_score.c`: normalized bounded integer score primitives.
+- `include/adaptive_aware_pool.h` / `src/adaptive_aware_pool.c`: adaptive selector layered on safety/locality/circuit state.
+- `src/adaptive_aware_selection_lab.c`: load shift, latency/load tradeoff, fairness, and locality precedence scenarios.
+- `tests/unit/test_adaptive_aware_pool.c`: score arithmetic, validation, stale behavior, dynamic load, fairness, and locality assertions.
+- `tests/integration/test_adaptive_aware_selection.py`: CLI-level policy checks.
+- `Makefile`: Phase 51 normal, sanitizer, regression, and gate integration.
+
+### Quality gate
+PASS ON FEDORA (`make phase51-gate`).
+
+### Commit
+`56c36c2 feat: add adaptive load latency scoring`
+
+### Next Phase
+Phase 52 - adaptive scoring stability and overload/failover stress.
+
 ## Phase 52 - Adaptive Stability and Stress Testing
 
 **Status:** COMPLETE
@@ -2496,7 +2556,7 @@ Phase 57 - production routing policy configuration and safe runtime tuning.
 
 ## Phase 57 - Production Routing Policy Configuration
 
-**Status:** IN PROGRESS - AWAITING LOCAL FEDORA QUALITY GATE
+**Status:** COMPLETE
 
 ### Goal
 Move soft adaptive-routing tuning into one strict, bounded startup policy while keeping health, circuit, capacity, and locality ordering non-configurable.
@@ -2523,7 +2583,7 @@ Phase 58 - controlled policy reload / rollout safety.
 
 ## Phase 58 - Controlled Policy Reload and Rollout Safety
 
-Status: CURRENT
+Status: COMPLETE
 
 - [x] Keep Phase 57 strict parsing/validation before publication.
 - [x] Publish policy fields under a coherent sequence-guarded atomic snapshot.
@@ -2533,11 +2593,11 @@ Status: CURRENT
 - [x] Republish rollback as a new generation rather than decrementing history.
 - [x] Stress concurrent readers against repeated alternating policy updates.
 - [x] Preserve Phase 57 policy, adaptive-selection, and Phase 53 performance regressions.
-- [ ] Fedora `make phase58-gate` authoritative completion marker.
+- [x] Fedora `make phase58-gate` authoritative completion marker.
 
 ## Phase 59 - Live Proxy Routing Policy Reload
 
-Status: CURRENT
+Status: COMPLETE
 
 - [x] Add opt-in `--routing-policy PATH` to the live epoll proxy while preserving legacy round-robin behavior when omitted.
 - [x] Fail startup closed when an explicitly configured routing-policy file is invalid.
@@ -2549,14 +2609,14 @@ Status: CURRENT
 - [x] Log the bounded numeric policy generation used by each managed routing decision.
 - [x] Prove an in-flight request survives successful and rejected reload attempts.
 - [x] Add focused integration and sanitizer targets plus a Phase 59 gate.
-- [ ] Fedora `make phase59-gate` authoritative completion marker.
+- [x] Fedora `make phase59-gate` authoritative completion marker.
 
 ### Phase boundary
 Phase 59 provides explicit operator-triggered live reload only. Filesystem watching, automatic tuning, and production live latency-signal ingestion remain later work.
 
 ## Phase 60 - Automatic Routing Policy Reload
 
-Status: CURRENT
+Status: COMPLETE
 
 - [x] Add a reusable nonblocking Linux `inotify` routing-policy watcher.
 - [x] Watch the policy parent directory so atomic inode replacement remains observable.
@@ -2569,7 +2629,14 @@ Status: CURRENT
 - [x] Prove an in-flight connection survives automatic reload.
 - [x] Preserve the explicit SIGHUP operator path and suppress duplicate pending auto-reload after it.
 - [x] Add focused unit, integration, and sanitizer targets plus a Phase 60 gate.
-- [ ] Fedora `make phase60-gate` authoritative completion marker.
+- [x] Fedora `make phase60-gate` authoritative completion marker.
 
 ### Phase boundary
 Phase 60 automates observation of operator/config-manager file changes only. It does not autonomously tune routing weights from telemetry and does not introduce a separate control-plane daemon.
+
+
+## Project Completion
+
+**Status:** COMPLETE - 60/60 planned phases finished.
+
+The final Fedora `make phase60-gate` passed, closing the planned roadmap. The project now includes the event-driven reverse proxy, Linux isolation labs, observability pipeline, self-healing control logic, edge-aware adaptive routing, safe policy generations, live SIGHUP reload, and automatic inotify-driven policy reload.

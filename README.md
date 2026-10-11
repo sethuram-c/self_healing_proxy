@@ -26,16 +26,11 @@ The project currently includes:
 - cgroup memory limits with controlled OOM verification
 - cgroup CPU quotas with scheduler-throttling verification
 
-## Planned later stages
+## Project status
 
-The roadmap later adds:
+The planned 60-phase roadmap is complete. The implementation now includes Unix-domain-socket IPC, OpenTelemetry logs/metrics/traces, Grafana operational views, active and passive health evidence, bounded self-healing and recovery orchestration, edge-aware adaptive routing, validated runtime routing policy, coherent monotonic policy generations, live SIGHUP reload, and automatic Linux inotify-driven policy reload.
 
-- Unix-domain-socket IPC
-- OpenTelemetry metrics and traces
-- Watchdog/supervisor-based self-healing
-- Failure injection and incident bundles
-- Edge-aware latency-based backend routing
-- Performance profiling, soak testing, and CI
+The final acceptance gate is `make phase60-gate`.
 
 ## Development environment
 
