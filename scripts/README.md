@@ -1,45 +1,38 @@
-# Performance baselines
+# Scripts
 
-This directory stores repeatable benchmark results for the micro-proxy.
+Helper scripts used by the integration tests and manual labs.
 
-## Phase 20 baseline
+## Networking and cgroup labs
 
-Build and run the optimized benchmark binary and harness:
+- `netns_veth_lab.sh` - creates and verifies the disposable network-namespace/veth topology used by Phase 23.
+- `cgroup_v2_lab.sh` - creates a cgroup v2 leaf and checks process membership/accounting.
+- `cgroup_memory_lab.sh` - applies a memory limit and verifies the controlled OOM test.
+- `cgroup_cpu_lab.sh` - applies `cpu.max` and verifies scheduler throttling.
+
+These scripts create kernel state and normally need root privileges. Each has a `help` command and a cleanup path.
+
+Example:
+
+```bash
+sudo scripts/netns_veth_lab.sh setup
+sudo scripts/netns_veth_lab.sh verify
+sudo scripts/netns_veth_lab.sh cleanup
+```
+
+## Observability helpers
+
+- `otel_collector_lab.sh` - starts/stops the OpenTelemetry Collector development lab.
+- `grafana_lgtm_lab.sh` - starts/stops the Grafana LGTM development stack used by the observability integration tests.
+- `phase38_telemetry_benchmark.py` - measures the bounded telemetry path under normal, missing, and stalled collector conditions.
+
+The matching Make targets are generally easier to use than invoking these scripts directly.
+
+## Proxy benchmark
+
+`benchmark_proxy.py` drives the Stage 2 direct-backend-versus-proxy baseline and writes `benchmarks/phase20_baseline.json`.
+
+Run it through Make so the correct binary and arguments are used:
 
 ```bash
 make benchmark
 ```
-
-The command writes:
-
-```text
-benchmarks/phase20_baseline.json
-```
-
-The Phase 20 workload uses:
-
-- two deterministic local mock backends on ports 9001 and 9002;
-- the C proxy on port 8081;
-- one TCP connection per HTTP request;
-- a warm-up pass before measurements;
-- the same HTTP path for direct-backend-pool and proxied measurements;
-- a fixed measured request count and concurrency;
-- proxy/backend stdout and stderr redirected away from the terminal.
-
-The JSON report records successful/failed requests, elapsed time, requests per
-second, mean/min/max request latency, backend distribution, and the proxy's
-throughput/mean-latency delta relative to a direct backend request path.
-
-Phase 20 is intentionally a baseline, not an optimization exercise. Formal
-p50/p95/p99 analysis, CPU/memory/FD/syscall profiling, and longer soak testing
-remain later roadmap phases.
-
-## Reproducibility
-
-Before comparing two results, keep the workload and environment as similar as
-possible. Record meaningful changes such as compiler flags, CPU power mode,
-virtualization, and competing workloads in your commit notes or experiment
-notes.
-
-Do not compare sanitized binaries against optimized benchmark binaries.
-Sanitizers intentionally add substantial overhead.
